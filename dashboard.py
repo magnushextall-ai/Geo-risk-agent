@@ -1,0 +1,187 @@
+"""Builds a self-contained HTML dashboard from risk.db. Run: python dashboard.py"""
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+
+import config
+
+LABELS = {
+    "armed_conflict": "Armed conflict", "military_tension": "Military tension",
+    "terrorism": "Terrorism", "political_instability": "Political instability",
+    "sanctions_trade": "Sanctions & trade", "energy_resources": "Energy & resources",
+    "diplomacy": "Diplomacy", "cyber_hybrid": "Cyber & hybrid", "humanitarian": "Humanitarian",
+}
+
+
+def load():
+    db = sqlite3.connect(config.DB_PATH)
+    db.row_factory = sqlite3.Row
+    rows = [dict(r) for r in db.execute(
+        "SELECT source, title, link, fetched_at, country, region, category, severity, reason, demo "
+        "FROM articles ORDER BY fetched_at DESC")]
+    db.close()
+    return rows
+
+
+def build():
+    rows = load()
+    data = {
+        "rows": rows,
+        "labels": LABELS,
+        "generated": datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC"),
+        "demo": any(r["demo"] for r in rows),
+    }
+    html = TEMPLATE.replace("/*DATA*/null", json.dumps(data))
+    with open(config.DASHBOARD_PATH, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+TEMPLATE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geopolitical Risk Monitor</title>
+<style>
+:root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
+--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--s1:#2a78d6;--crit:#d03b3b;--warn:#fab219;
+--q1:#cde2fb;--q2:#9ec5f4;--q3:#6da7ec;--q4:#3987e5;--q5:#256abf;--q6:#184f95;--q7:#0d366b;--hiink:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--page:#0d0d0d;--surface:#1a1a19;
+--ink:#f0efec;--ink2:#c3c2b7;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--s1:#3987e5;
+--q1:#104281;--q2:#184f95;--q3:#1c5cab;--q4:#256abf;--q5:#3987e5;--q6:#6da7ec;--q7:#9ec5f4;--hiink:#0b0b0b}}
+:root[data-theme="dark"]{color-scheme:dark;--page:#0d0d0d;--surface:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;
+--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--s1:#3987e5;
+--q1:#104281;--q2:#184f95;--q3:#1c5cab;--q4:#256abf;--q5:#3987e5;--q6:#6da7ec;--q7:#9ec5f4;--hiink:#0b0b0b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1120px;margin:0 auto;padding:28px 16px 48px}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:20px}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em} h2{font-size:15px;margin:0 0 2px}
+.sub{color:var(--ink2);margin:0}.note{color:var(--muted);font-size:12px;margin:0 0 12px}
+.banner{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--warn);border-radius:8px;padding:10px 14px;margin-bottom:16px;color:var(--ink2)}
+.filters{display:flex;gap:8px;flex-wrap:wrap}
+select{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.tile .v{font-size:30px;font-weight:600;margin-top:4px}.tile .k{color:var(--ink2)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.grid2>*{min-width:0}
+@media (max-width:820px){.grid2{grid-template-columns:1fr}}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{fill:var(--muted);font-size:11px}
+.tip{position:fixed;pointer-events:none;background:var(--surface);color:var(--ink);border:1px solid var(--border);
+border-radius:6px;padding:6px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;z-index:9}
+.heat{width:100%;border-collapse:separate;border-spacing:2px;font-size:12px}
+.heat th{color:var(--ink2);font-weight:500;text-align:left;padding:4px}
+.heat th.c{text-align:center;writing-mode:vertical-rl;transform:rotate(180deg);height:118px;vertical-align:bottom}
+.heat td{text-align:center;border-radius:4px;height:30px;min-width:30px;color:var(--ink);font-variant-numeric:tabular-nums}
+.heatwrap{overflow-x:auto}
+table.list{width:100%;border-collapse:collapse}
+.list th{text-align:left;color:var(--ink2);font-weight:500;border-bottom:1px solid var(--axis);padding:6px 8px}
+.list td:nth-child(2){min-width:220px}.list td{border-bottom:1px solid var(--grid);padding:8px;vertical-align:top}
+.list a{color:var(--ink)}.sev{font-weight:600;white-space:nowrap}
+.legend{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;margin-top:8px}
+.legend span{width:18px;height:10px;border-radius:2px;display:inline-block}
+</style></head><body><main>
+<header><div><h1>Geopolitical Risk Monitor</h1>
+<p class="sub">Headlines from major outlets, classified by Claude into risk type, region and severity (0–5).</p></div>
+<div class="filters"><select id="fRange"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="9999">All time</option></select>
+<select id="fRegion"><option value="">All regions</option></select></div></header>
+<div id="banner"></div>
+<section class="tiles" id="tiles"></section>
+<section class="card" style="margin-bottom:12px"><h2>Daily risk index</h2>
+<p class="note">Sum of severity across all geopolitical items each day. Higher means more, or more serious, events.</p><div id="trend"></div></section>
+<section class="grid2">
+<div class="card"><h2>Events by risk type</h2><p class="note">Count of classified items</p><div id="cats"></div></div>
+<div class="card"><h2>Region × risk type</h2><p class="note">Count of items; darker = more</p><div class="heatwrap" id="heat"></div><div class="legend" id="hl"></div></div>
+</section>
+<section class="card"><h2>Highest-severity items</h2><p class="note">Severity 4–5, newest first</p><div id="top"></div></section>
+<p class="note" id="foot" style="margin-top:16px"></p>
+</main><div class="tip" id="tip"></div>
+<script>
+const D=/*DATA*/null;
+const $=id=>document.getElementById(id), tip=$('tip');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function showTip(e,h){tip.innerHTML=h;tip.style.display='block';const x=Math.min(e.clientX+12,innerWidth-tip.offsetWidth-8);tip.style.left=x+'px';tip.style.top=(e.clientY+12)+'px'}
+function hideTip(){tip.style.display='none'}
+const day=s=>s.slice(0,10);
+const regions=[...new Set(D.rows.map(r=>r.region).filter(Boolean))].sort();
+regions.forEach(r=>$('fRegion').insertAdjacentHTML('beforeend',`<option>${esc(r)}</option>`));
+$('foot').textContent=`Generated ${D.generated}. Severity and categories are model judgements and can be wrong; check sources before relying on them.`;
+if(D.demo)$('banner').innerHTML='<div class="banner"><b>Demo data.</b> These rows are synthetic placeholders, not real news. Run <code>python agent.py</code> with an API key to replace them.</div>';
+
+function render(){
+  const days=+$('fRange').value, reg=$('fRegion').value;
+  const cutoff=new Date(Date.now()-days*864e5).toISOString();
+  const all=D.rows.filter(r=>r.fetched_at>=cutoff&&(!reg||r.region===reg));
+  const geo=all.filter(r=>r.category!=='not_geopolitical');
+  // tiles
+  const hi=geo.filter(r=>r.severity>=4).length;
+  const byReg={};geo.forEach(r=>byReg[r.region]=(byReg[r.region]||0)+r.severity);
+  const topReg=Object.entries(byReg).sort((a,b)=>b[1]-a[1])[0];
+  const avg=geo.length?(geo.reduce((a,r)=>a+r.severity,0)/geo.length).toFixed(1):'–';
+  $('tiles').innerHTML=[['Items analysed',all.length],['Geopolitical items',geo.length],['High severity (4–5)',hi],['Avg severity',avg],['Most at-risk region',topReg?topReg[0]:'–']]
+   .map(([k,v])=>`<div class="card tile"><div class="k">${k}</div><div class="v" style="${String(v).length>8?'font-size:20px':''}">${esc(v)}</div></div>`).join('');
+  trend(geo,Math.min(days,60)); cats(geo); heat(geo); topList(geo);
+}
+
+function trend(geo,n){
+  const W=1000,H=220,P={l:36,r:12,t:12,b:26};
+  const ds=[];for(let i=n-1;i>=0;i--)ds.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
+  const v=ds.map(d=>geo.filter(r=>day(r.fetched_at)===d).reduce((a,r)=>a+r.severity,0));
+  const max=Math.max(5,...v), nice=Math.ceil(max/5)*5;
+  const x=i=>P.l+(ds.length<2?0:i*(W-P.l-P.r)/(ds.length-1)), y=t=>P.t+(H-P.t-P.b)*(1-t/nice);
+  let g='';for(let k=0;k<=4;k++){const t=nice*k/4;g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--${k?'grid':'axis'})"/><text x="${P.l-6}" y="${y(t)+4}" text-anchor="end" style="font-variant-numeric:tabular-nums">${t}</text>`}
+  const step=Math.ceil(ds.length/8);ds.forEach((d,i)=>{if((i%step===0&&ds.length-1-i>=step/2)||i===ds.length-1)g+=`<text x="${x(i)}" y="${H-6}" text-anchor="middle">${new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</text>`});
+  const path=v.map((t,i)=>(i?'L':'M')+x(i)+','+y(t)).join('');
+  $('trend').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily risk index line chart">${g}
+   <path d="${path}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+   <line id="xh" y1="${P.t}" y2="${H-P.b}" stroke="var(--axis)" style="display:none"/><circle id="dot" r="4.5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2" style="display:none"/>
+   <rect x="${P.l}" y="0" width="${W-P.l-P.r}" height="${H}" fill="transparent" id="hit"/></svg>`;
+  const svg=$('trend').querySelector('svg');
+  $('hit').onmousemove=e=>{const b=svg.getBoundingClientRect(),px=(e.clientX-b.left)*W/b.width;
+    const i=Math.max(0,Math.min(ds.length-1,Math.round((px-P.l)/((W-P.l-P.r)/Math.max(1,ds.length-1)))));
+    $('xh').setAttribute('x1',x(i));$('xh').setAttribute('x2',x(i));$('xh').style.display='';
+    $('dot').setAttribute('cx',x(i));$('dot').setAttribute('cy',y(v[i]));$('dot').style.display='';
+    const cnt=geo.filter(r=>day(r.fetched_at)===ds[i]).length;
+    showTip(e,`<b>${new Date(ds[i]).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}</b><br>Risk index ${v[i]} · ${cnt} items`)};
+  $('hit').onmouseleave=()=>{hideTip();$('xh').style.display='none';$('dot').style.display='none'};
+}
+
+function cats(geo){
+  const c=Object.keys(D.labels).map(k=>[k,geo.filter(r=>r.category===k).length]).sort((a,b)=>b[1]-a[1]);
+  const max=Math.max(1,...c.map(d=>d[1])),W=500,row=26,L=140,H=c.length*row;
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Events by risk type bar chart">`;
+  c.forEach(([k,n],i)=>{const w=Math.max(n?3:0,(W-L-40)*n/max),yy=i*row;
+    s+=`<g class="b" data-t="${esc(D.labels[k])}: ${n}"><rect x="0" y="${yy}" width="${W}" height="${row}" fill="transparent"/>
+    <text x="${L-8}" y="${yy+17}" text-anchor="end" style="fill:var(--ink2)">${esc(D.labels[k])}</text>
+    <path d="M${L},${yy+5}h${Math.max(0,w-4)}a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-${Math.max(0,w-4)}z" fill="var(--s1)"/>
+    <text x="${L+w+6}" y="${yy+17}" style="fill:var(--ink2);font-variant-numeric:tabular-nums">${n}</text></g>`});
+  $('cats').innerHTML=s+'</svg>';
+  $('cats').querySelectorAll('.b').forEach(g=>{g.onmousemove=e=>showTip(e,esc(g.dataset.t));g.onmouseleave=hideTip});
+}
+
+function heat(geo){
+  const regs=[...new Set(geo.map(r=>r.region))].sort(), ks=Object.keys(D.labels);
+  const cnt=(r,k)=>geo.filter(x=>x.region===r&&x.category===k).length;
+  const max=Math.max(1,...regs.flatMap(r=>ks.map(k=>cnt(r,k))));
+  const shade=n=>n?`var(--q${Math.min(7,1+Math.floor(6*n/max))})`:'transparent';
+  let h='<table class="heat"><tr><th></th>'+ks.map(k=>`<th class="c">${esc(D.labels[k])}</th>`).join('')+'</tr>';
+  regs.forEach(r=>{h+=`<tr><th>${esc(r)}</th>`+ks.map(k=>{const n=cnt(r,k),dark=n/max>0.55;
+    return `<td title="${esc(r)} · ${esc(D.labels[k])}: ${n}" style="background:${shade(n)};${n?'':'border:1px solid var(--grid);'}${dark?'color:var(--hiink)':''}">${n||''}</td>`}).join('')+'</tr>'});
+  $('heat').innerHTML=regs.length?h+'</table>':'<p class="note">No data in this range.</p>';
+  $('hl').innerHTML='Fewer '+[1,2,3,4,5,6,7].map(i=>`<span style="background:var(--q${i})"></span>`).join('')+' More';
+}
+
+function topList(geo){
+  const t=geo.filter(r=>r.severity>=4).slice(0,15);
+  $('top').innerHTML=t.length?'<div class="heatwrap"><table class="list"><tr><th>Sev.</th><th>Headline</th><th>Where</th><th>Type</th><th>Source</th></tr>'+t.map(r=>
+   `<tr><td class="sev" style="color:${r.severity>=5?'var(--crit)':'var(--ink)'}">${r.severity>=5?'▲ ':''}${r.severity}</td>
+    <td>${r.link?`<a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.title)}</a>`:esc(r.title)}${r.reason&&!r.demo?`<div class="note" style="margin:2px 0 0">${esc(r.reason)}</div>`:''}</td>
+    <td>${esc(r.country)}</td><td>${esc(D.labels[r.category])}</td><td>${esc(r.source)}</td></tr>`).join('')+'</table></div>':'<p class="note">None in this range.</p>';
+}
+$('fRange').onchange=render;$('fRegion').onchange=render;render();
+</script></body></html>"""
+
+if __name__ == "__main__":
+    build()
+    print(f"Dashboard written to {config.DASHBOARD_PATH}")
