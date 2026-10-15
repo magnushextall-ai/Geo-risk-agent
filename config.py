@@ -31,3 +31,8 @@ DASHBOARD_PATH = "index.html"  # index.html so GitHub Pages shows it as the home
 
 # Max articles to classify per feed per run (keeps costs predictable).
 MAX_PER_FEED = 40
+
+# GDELT: how many past days of conflict events to keep, and the minimum number of
+# separate news sources an event needs (filters out one-off, possibly mistaken reports).
+GDELT_DAYS = 30
+GDELT_MIN_SOURCES = 2

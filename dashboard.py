@@ -20,14 +20,20 @@ def load():
     rows = [dict(r) for r in db.execute(
         "SELECT source, title, link, fetched_at, country, region, category, severity, reason, demo "
         "FROM articles ORDER BY fetched_at DESC")]
+    try:
+        gdelt = [dict(r) for r in db.execute(
+            "SELECT day, country, region, category, events, mentions, goldstein FROM gdelt_daily")]
+    except sqlite3.OperationalError:  # GDELT not loaded yet
+        gdelt = []
     db.close()
-    return rows
+    return rows, gdelt
 
 
 def build():
-    rows = load()
+    rows, gdelt = load()
     data = {
         "rows": rows,
+        "gdelt": gdelt,
         "labels": LABELS,
         "generated": datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC"),
         "demo": any(r["demo"] for r in rows),
@@ -94,6 +100,13 @@ table.list{width:100%;border-collapse:collapse}
 <div class="card"><h2>Events by risk type</h2><p class="note">Count of classified items</p><div id="cats"></div></div>
 <div class="card"><h2>Region × risk type</h2><p class="note">Count of items; darker = more</p><div class="heatwrap" id="heat"></div><div class="legend" id="hl"></div></div>
 </section>
+<section class="card" style="margin-bottom:12px"><h2>GDELT conflict events</h2>
+<p class="note">Daily count of conflict-type events (threats, protests, sanctions, attacks, fighting) machine-coded by GDELT from world news, reported by at least two sources. A larger, independent sample to compare with the headline analysis above.</p>
+<div id="gtrend"></div></section>
+<section class="grid2">
+<div class="card"><h2>GDELT: most conflict events by country</h2><p class="note">Total events in the selected range</p><div id="gcountries"></div></div>
+<div class="card"><h2>GDELT: events by risk type</h2><p class="note">Total events in the selected range</p><div id="gcats"></div></div>
+</section>
 <section class="card"><h2>Highest-severity items</h2><p class="note">Severity 4–5, newest first</p><div id="top"></div></section>
 <p class="note" id="foot" style="margin-top:16px"></p>
 </main><div class="tip" id="tip"></div>
@@ -104,7 +117,7 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 function showTip(e,h){tip.innerHTML=h;tip.style.display='block';const x=Math.min(e.clientX+12,innerWidth-tip.offsetWidth-8);tip.style.left=x+'px';tip.style.top=(e.clientY+12)+'px'}
 function hideTip(){tip.style.display='none'}
 const day=s=>s.slice(0,10);
-const regions=[...new Set(D.rows.map(r=>r.region).filter(Boolean))].sort();
+const regions=[...new Set([...D.rows,...(D.gdelt||[])].map(r=>r.region).filter(Boolean))].sort();
 regions.forEach(r=>$('fRegion').insertAdjacentHTML('beforeend',`<option>${esc(r)}</option>`));
 $('foot').textContent=`Generated ${D.generated}. Severity and categories are model judgements and can be wrong; check sources before relying on them.`;
 if(D.demo)$('banner').innerHTML='<div class="banner"><b>Demo data.</b> These rows are synthetic placeholders, not real news. Run <code>python agent.py</code> with an API key to replace them.</div>';
@@ -122,6 +135,55 @@ function render(){
   $('tiles').innerHTML=[['Items analysed',all.length],['Geopolitical items',geo.length],['High severity (4–5)',hi],['Avg severity',avg],['Most at-risk region',topReg?topReg[0]:'–']]
    .map(([k,v])=>`<div class="card tile"><div class="k">${k}</div><div class="v" style="${String(v).length>8?'font-size:20px':''}">${esc(v)}</div></div>`).join('');
   trend(geo,Math.min(days,60)); cats(geo); heat(geo); topList(geo);
+  gdeltRender(days,reg);
+}
+
+function gdeltRender(days,reg){
+  const n=Math.min(days,60);
+  const cutoff=new Date(Date.now()-n*864e5).toISOString().slice(0,10);
+  const g=(D.gdelt||[]).filter(r=>r.day>=cutoff&&(!reg||r.region===reg));
+  if(!g.length){['gtrend','gcountries','gcats'].forEach(id=>$(id).innerHTML='<p class="note">No GDELT data yet. It is added on the next daily run.</p>');return}
+  const ds=[];for(let i=n;i>=1;i--)ds.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
+  const byDay={};g.forEach(r=>byDay[r.day]=(byDay[r.day]||0)+r.events);
+  const loaded=new Set(g.map(r=>r.day));
+  lineChart('gtrend',ds,ds.map(d=>loaded.has(d)?byDay[d]||0:null),(d,v)=>`${v==null?'Not loaded':v.toLocaleString()+' events'}`,'GDELT daily conflict events line chart');
+  const byC={};g.forEach(r=>byC[r.country]=(byC[r.country]||0)+r.events);
+  barChart('gcountries',Object.entries(byC).sort((a,b)=>b[1]-a[1]).slice(0,10),'Top countries by GDELT conflict events');
+  const byK={};g.forEach(r=>byK[r.category]=(byK[r.category]||0)+r.events);
+  barChart('gcats',Object.entries(byK).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[D.labels[k]||k,v]),'GDELT events by risk type');
+}
+
+function lineChart(id,ds,v,tipText,label){
+  const W=1000,H=220,P={l:48,r:12,t:12,b:26};
+  const vals=v.filter(x=>x!=null),max=Math.max(5,...vals);
+  const mag=Math.pow(10,Math.floor(Math.log10(max))),nice=Math.ceil(max/mag)*mag;
+  const x=i=>P.l+(ds.length<2?0:i*(W-P.l-P.r)/(ds.length-1)), y=t=>P.t+(H-P.t-P.b)*(1-t/nice);
+  let g='';for(let k=0;k<=4;k++){const t=nice*k/4;g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--${k?'grid':'axis'})"/><text x="${P.l-6}" y="${y(t)+4}" text-anchor="end" style="font-variant-numeric:tabular-nums">${t>=1000?(t/1000)+'k':t}</text>`}
+  const step=Math.ceil(ds.length/8);ds.forEach((d,i)=>{if((i%step===0&&ds.length-1-i>=step/2)||i===ds.length-1)g+=`<text x="${x(i)}" y="${H-6}" text-anchor="middle">${new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</text>`});
+  let path='',pen=false;v.forEach((t,i)=>{if(t==null){pen=false;return}path+=(pen?'L':'M')+x(i)+','+y(t);pen=true});
+  $(id).innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${g}
+   <path d="${path}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+   <line class="xh" y1="${P.t}" y2="${H-P.b}" stroke="var(--axis)" style="display:none"/><circle class="dot" r="4.5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2" style="display:none"/>
+   <rect x="${P.l}" y="0" width="${W-P.l-P.r}" height="${H}" fill="transparent" class="hit"/></svg>`;
+  const svg=$(id).querySelector('svg'),xh=svg.querySelector('.xh'),dot=svg.querySelector('.dot'),hit=svg.querySelector('.hit');
+  hit.onmousemove=e=>{const b=svg.getBoundingClientRect(),px=(e.clientX-b.left)*W/b.width;
+    const i=Math.max(0,Math.min(ds.length-1,Math.round((px-P.l)/((W-P.l-P.r)/Math.max(1,ds.length-1)))));
+    xh.setAttribute('x1',x(i));xh.setAttribute('x2',x(i));xh.style.display='';
+    if(v[i]!=null){dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(v[i]));dot.style.display=''}else dot.style.display='none';
+    showTip(e,`<b>${new Date(ds[i]).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}</b><br>${tipText(ds[i],v[i])}`)};
+  hit.onmouseleave=()=>{hideTip();xh.style.display='none';dot.style.display='none'};
+}
+
+function barChart(id,c,label){
+  const max=Math.max(1,...c.map(d=>d[1])),W=500,row=26,L=150,H=Math.max(row,c.length*row);
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">`;
+  c.forEach(([k,n],i)=>{const w=Math.max(n?3:0,(W-L-56)*n/max),yy=i*row;
+    s+=`<g class="b" data-t="${esc(k)}: ${n.toLocaleString()}"><rect x="0" y="${yy}" width="${W}" height="${row}" fill="transparent"/>
+    <text x="${L-8}" y="${yy+17}" text-anchor="end" style="fill:var(--ink2)">${esc(k)}</text>
+    <path d="M${L},${yy+5}h${Math.max(0,w-4)}a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-${Math.max(0,w-4)}z" fill="var(--s1)"/>
+    <text x="${L+w+6}" y="${yy+17}" style="fill:var(--ink2);font-variant-numeric:tabular-nums">${n.toLocaleString()}</text></g>`});
+  $(id).innerHTML=s+'</svg>';
+  $(id).querySelectorAll('.b').forEach(g=>{g.onmousemove=e=>showTip(e,esc(g.dataset.t));g.onmouseleave=hideTip});
 }
 
 function trend(geo,n){

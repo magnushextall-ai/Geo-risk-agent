@@ -168,7 +168,16 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--demo", action="store_true", help="load synthetic sample data instead of live feeds")
     args = p.parse_args()
-    run_demo() if args.demo else run_live()
+    if args.demo:
+        run_demo()
+    else:
+        run_live()
+        print("Updating GDELT data...")
+        try:
+            import gdelt
+            gdelt.update()
+        except Exception as e:  # the news part still works if GDELT is down
+            print(f"  ! GDELT update failed: {e}")
     from dashboard import build
     build()
     print(f"Dashboard written to {config.DASHBOARD_PATH}")
