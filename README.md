@@ -8,7 +8,17 @@ An AI agent that reads headlines from major international news outlets (BBC, Le 
 2. **Classify**: sends each new item to Claude with a fixed analytical framework: nine risk categories and a 0–5 severity scale (see `config.py`). Claude returns structured JSON: country, region, category, severity and a one-line justification.
 3. **Store**: saves results in a local SQLite database (`risk.db`), skipping anything already seen.
 4. **Cross-check with GDELT**: downloads the free daily event files from the [GDELT Project](https://www.gdeltproject.org/), which machine-codes world news into events, and keeps conflict-type events (CAMEO codes 13–20: threats, protests, force posture, sanctions, coercion, assaults, fighting, mass violence) reported by at least two sources. These are mapped to the same risk categories and stored as daily counts per country (`gdelt.py`). Because GDELT keeps a full archive, the first run backfills the last 30 days.
-5. **Visualise**: builds the dashboard (`index.html`), showing a daily risk index, events by type, a region × risk-type heatmap and the highest-severity items, filterable by date range and region.
+5. **Visualise**: builds the dashboard (`index.html`), showing a daily risk index, events by type, a region × risk-type heatmap, an energy security section and the highest-severity items, filterable by date range, region and lens.
+
+## Energy security lens
+
+Energy risk rarely fits one category: a drone strike on a refinery is *armed conflict*, but it is also an energy-supply story. So energy is tagged as a separate, cross-cutting lens. Alongside its main category, Claude gives each headline:
+
+- **Energy themes** (any that apply): oil & gas supply routes; Russian energy & sanctions; critical minerals; Arctic & Northern Sea Route; attacks on energy and subsea infrastructure; other energy security
+- **Chokepoint** if one is involved: Strait of Hormuz, Red Sea & Suez, Baltic Sea, Black Sea, Arctic & Northern Sea Route
+- **Energy note**: one sentence on the energy-security implication
+
+The dashboard's *Lens* filter narrows every headline chart to energy items (or one theme), and the Energy security section shows a chokepoint watch, items by theme, a daily energy risk index and the energy-tagged items with their notes. Theme definitions live in `config.py`, so the lens can be tuned or extended. The lens applies to the headline analysis only, not to GDELT.
 
 ## Running it
 

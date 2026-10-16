@@ -15,11 +15,12 @@ LABELS = {
 
 
 def load():
-    db = sqlite3.connect(config.DB_PATH)
+    from agent import connect  # also adds any newer columns to an older database
+    db = connect()
     db.row_factory = sqlite3.Row
     rows = [dict(r) for r in db.execute(
-        "SELECT source, title, link, fetched_at, country, region, category, severity, reason, demo "
-        "FROM articles ORDER BY fetched_at DESC")]
+        "SELECT source, title, link, fetched_at, country, region, category, severity, reason, demo, "
+        "energy_themes, chokepoint, energy_note FROM articles ORDER BY fetched_at DESC")]
     try:
         run = db.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
         run = dict(run) if run else None
@@ -41,6 +42,8 @@ def build():
         "rows": rows,
         "gdelt": gdelt,
         "labels": LABELS,
+        "energy": {k: label for k, (label, _) in config.ENERGY_THEMES.items()},
+        "chokepoints": config.CHOKEPOINTS,
         "generated": datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC"),
         "demo": any(r["demo"] for r in rows),
     }
@@ -91,13 +94,22 @@ table.list{width:100%;border-collapse:collapse}
 .list th{text-align:left;color:var(--ink2);font-weight:500;border-bottom:1px solid var(--axis);padding:6px 8px}
 .list td:nth-child(2){min-width:220px}.list td{border-bottom:1px solid var(--grid);padding:8px;vertical-align:top}
 .list a{color:var(--ink)}.sev{font-weight:600;white-space:nowrap}
+.pill{display:inline-block;font-size:11px;line-height:1.3;color:var(--ink2);border:1px solid var(--border);border-radius:999px;padding:1px 7px;margin:3px 4px 0 0;white-space:nowrap}
+.choke{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0 16px}
+.cp{border:1px solid var(--border);border-radius:8px;padding:10px 12px;min-width:0}
+.cp .n{font-size:22px;font-weight:600;margin:2px 0}.cp .k{color:var(--ink2);font-size:12px}
+.cp .h{font-size:12px;color:var(--ink2);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cp .h a{color:var(--ink2)}
+h3{font-size:13px;margin:0;color:var(--ink2);font-weight:600}
+.lensnote{font-size:12px;color:var(--muted);margin:0 0 8px}
 .legend{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;margin-top:8px}
 .legend span{width:18px;height:10px;border-radius:2px;display:inline-block}
 </style></head><body><main>
 <header><div><h1>Geopolitical Risk Monitor</h1>
 <p class="sub">Headlines from major outlets, classified by Claude into risk type, region and severity (0–5).</p></div>
 <div class="filters"><select id="fRange"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="9999">All time</option></select>
-<select id="fRegion"><option value="">All regions</option></select></div></header>
+<select id="fRegion"><option value="">All regions</option></select>
+<select id="fLens" aria-label="Lens"><option value="">Lens: all risks</option><option value="*">Lens: energy security</option></select></div></header>
 <div id="banner"></div>
 <section class="tiles" id="tiles"></section>
 <section class="card" style="margin-bottom:12px"><h2>Daily risk index</h2>
@@ -106,7 +118,15 @@ table.list{width:100%;border-collapse:collapse}
 <div class="card"><h2>Events by risk type</h2><p class="note">Count of classified items</p><div id="cats"></div></div>
 <div class="card"><h2>Region × risk type</h2><p class="note">Count of items; darker = more</p><div class="heatwrap" id="heat"></div><div class="legend" id="hl"></div></div>
 </section>
-<section class="card" style="margin-bottom:12px"><h2>GDELT conflict events</h2>
+<section class="card" style="margin-bottom:12px"><h2>Energy security lens</h2>
+<p class="note" id="enote">Headlines with an energy-security dimension, tagged by Claude on top of their main risk type.</p>
+<h3>Chokepoint watch</h3><div class="choke" id="choke"></div>
+<div class="grid2" style="margin-bottom:16px">
+<div><h3>Energy items by theme</h3><p class="note">An item can carry more than one theme</p><div id="ethemes"></div></div>
+<div><h3>Daily energy risk index</h3><p class="note">Sum of severity across energy-tagged items each day</p><div id="etrend"></div></div>
+</div>
+<h3>Energy-tagged items</h3><p class="note">Most severe first, with Claude's note on the energy implication</p><div id="elist"></div></section>
+<section class="card" style="margin-bottom:12px"><h2>GDELT conflict events</h2><p class="lensnote" id="glens" style="display:none">The energy lens applies to the headline analysis only; GDELT shows all conflict events.</p>
 <p class="note">Daily count of conflict-type events (threats, protests, sanctions, attacks, fighting) machine-coded by GDELT from world news, reported by at least two sources. A larger, independent sample to compare with the headline analysis above.</p>
 <div id="gtrend"></div></section>
 <section class="grid2">
@@ -123,6 +143,9 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 function showTip(e,h){tip.innerHTML=h;tip.style.display='block';const x=Math.min(e.clientX+12,innerWidth-tip.offsetWidth-8);tip.style.left=x+'px';tip.style.top=(e.clientY+12)+'px'}
 function hideTip(){tip.style.display='none'}
 const day=s=>s.slice(0,10);
+const themesOf=r=>(r.energy_themes||'').split(',').filter(Boolean);
+Object.entries(D.energy||{}).forEach(([k,l])=>$('fLens').insertAdjacentHTML('beforeend',`<option value="${k}">Energy: ${esc(l)}</option>`));
+const pills=r=>themesOf(r).map(t=>`<span class="pill">${esc((D.energy||{})[t]||t)}</span>`).join('')+(r.chokepoint?`<span class="pill">${esc(r.chokepoint)}</span>`:'');
 const regions=[...new Set([...D.rows,...(D.gdelt||[])].map(r=>r.region).filter(Boolean))].sort();
 regions.forEach(r=>$('fRegion').insertAdjacentHTML('beforeend',`<option>${esc(r)}</option>`));
 $('foot').textContent=`Generated ${D.generated}. Severity and categories are model judgements and can be wrong; check sources before relying on them.`;
@@ -132,8 +155,12 @@ else if(D.demo)$('banner').innerHTML='<div class="banner"><b>Demo data.</b> Thes
 function render(){
   const days=+$('fRange').value, reg=$('fRegion').value;
   const cutoff=new Date(Date.now()-days*864e5).toISOString();
-  const all=D.rows.filter(r=>r.fetched_at>=cutoff&&(!reg||r.region===reg));
+  const lens=$('fLens').value;
+  const inLens=r=>!lens||(lens==='*'?themesOf(r).length>0:themesOf(r).includes(lens));
+  const base=D.rows.filter(r=>r.fetched_at>=cutoff&&(!reg||r.region===reg));
+  const all=base.filter(inLens);
   const geo=all.filter(r=>r.category!=='not_geopolitical');
+  $('glens').style.display=lens?'':'none';
   // tiles
   const hi=geo.filter(r=>r.severity>=4).length;
   const byReg={};geo.forEach(r=>byReg[r.region]=(byReg[r.region]||0)+r.severity);
@@ -142,7 +169,36 @@ function render(){
   $('tiles').innerHTML=[['Items analysed',all.length],['Geopolitical items',geo.length],['High severity (4–5)',hi],['Avg severity',avg],['Most at-risk region',topReg?topReg[0]:'–']]
    .map(([k,v])=>`<div class="card tile"><div class="k">${k}</div><div class="v" style="${String(v).length>8?'font-size:20px':''}">${esc(v)}</div></div>`).join('');
   trend(geo,Math.min(days,60)); cats(geo); heat(geo); topList(geo);
+  energyRender(base,lens,Math.min(days,60));
   gdeltRender(days,reg);
+}
+
+function energyRender(base,lens,n){
+  const geoAll=base.filter(r=>r.category!=='not_geopolitical');
+  const untagged=base.filter(r=>r.energy_themes==null).length;
+  let e=base.filter(r=>themesOf(r).length);
+  if(lens&&lens!=='*')e=e.filter(r=>themesOf(r).includes(lens));
+  const share=geoAll.length?Math.round(100*geoAll.filter(r=>themesOf(r).length).length/geoAll.length):0;
+  $('enote').textContent=`Headlines with an energy-security dimension, tagged by Claude on top of their main risk type. ${share}% of geopolitical items in this range have an energy angle.`+(untagged?` ${untagged} older items are still waiting to be tagged.`:'');
+  // chokepoints
+  $('choke').innerHTML=(D.chokepoints||[]).map(c=>{
+    const items=e.filter(r=>r.chokepoint===c), mx=Math.max(0,...items.map(r=>r.severity));
+    const latest=items[0];
+    return `<div class="cp"><div class="k">${esc(c)}</div><div class="n">${items.length}</div>
+      <div class="k" style="margin-bottom:4px">${items.length?`items · max severity <b style="color:${mx>=5?'var(--crit)':'var(--ink)'}">${mx>=5?'▲ ':''}${mx}</b>`:'no items in range'}</div>
+      ${latest?`<div class="h">${latest.link?`<a href="${esc(latest.link)}" target="_blank" rel="noopener">${esc(latest.title)}</a>`:esc(latest.title)}</div>`:''}</div>`}).join('');
+  // themes
+  const byT=Object.keys(D.energy||{}).map(k=>[D.energy[k],e.filter(r=>themesOf(r).includes(k)).length]).filter(d=>!(lens&&lens!=='*')||d[1]).sort((a,b)=>b[1]-a[1]);
+  barChart('ethemes',byT,'Energy items by theme',180);
+  // trend
+  const ds=[];for(let i=n-1;i>=0;i--)ds.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
+  lineChart('etrend',ds,ds.map(d=>e.filter(r=>day(r.fetched_at)===d).reduce((a,r)=>a+r.severity,0)),(d,v)=>`Energy risk index ${v} · ${e.filter(r=>day(r.fetched_at)===d).length} items`,'Daily energy risk index line chart',520);
+  // list
+  const t=[...e].sort((a,b)=>b.severity-a.severity||(b.fetched_at>a.fetched_at?1:-1)).slice(0,20);
+  $('elist').innerHTML=t.length?'<div class="heatwrap"><table class="list"><tr><th>Sev.</th><th>Headline</th><th>Where</th><th>Source</th></tr>'+t.map(r=>
+   `<tr><td class="sev" style="color:${r.severity>=5?'var(--crit)':'var(--ink)'}">${r.severity>=5?'▲ ':''}${r.severity}</td>
+    <td>${r.link?`<a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.title)}</a>`:esc(r.title)}${r.energy_note&&!r.demo?`<div class="note" style="margin:2px 0 0">${esc(r.energy_note)}</div>`:''}<div>${pills(r)}</div></td>
+    <td>${esc(r.country)}</td><td>${esc(r.source)}</td></tr>`).join('')+'</table></div>':'<p class="note">No energy-tagged items in this range.</p>';
 }
 
 function gdeltRender(days,reg){
@@ -160,13 +216,13 @@ function gdeltRender(days,reg){
   barChart('gcats',Object.entries(byK).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[D.labels[k]||k,v]),'GDELT events by risk type');
 }
 
-function lineChart(id,ds,v,tipText,label){
-  const W=1000,H=220,P={l:48,r:12,t:12,b:26};
+function lineChart(id,ds,v,tipText,label,W=1000){
+  const H=W<700?260:220,P={l:48,r:12,t:12,b:26};
   const vals=v.filter(x=>x!=null),max=Math.max(5,...vals);
-  const mag=Math.pow(10,Math.floor(Math.log10(max))),nice=Math.ceil(max/mag)*mag;
+  const raw=max/4,mag=Math.pow(10,Math.floor(Math.log10(raw))),stp=[1,2,2.5,5,10].map(m=>m*mag).find(s=>s>=raw),nice=stp*4;
   const x=i=>P.l+(ds.length<2?0:i*(W-P.l-P.r)/(ds.length-1)), y=t=>P.t+(H-P.t-P.b)*(1-t/nice);
   let g='';for(let k=0;k<=4;k++){const t=nice*k/4;g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--${k?'grid':'axis'})"/><text x="${P.l-6}" y="${y(t)+4}" text-anchor="end" style="font-variant-numeric:tabular-nums">${t>=1000?(t/1000)+'k':t}</text>`}
-  const step=Math.ceil(ds.length/8);ds.forEach((d,i)=>{if((i%step===0&&ds.length-1-i>=step/2)||i===ds.length-1)g+=`<text x="${x(i)}" y="${H-6}" text-anchor="middle">${new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</text>`});
+  const step=Math.ceil(ds.length/(W<700?4:8));ds.forEach((d,i)=>{if((i%step===0&&ds.length-1-i>=step/2)||i===ds.length-1)g+=`<text x="${x(i)}" y="${H-6}" text-anchor="${i===ds.length-1?'end':'middle'}">${new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</text>`});
   let path='',pen=false;v.forEach((t,i)=>{if(t==null){pen=false;return}path+=(pen?'L':'M')+x(i)+','+y(t);pen=true});
   $(id).innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${g}
    <path d="${path}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
@@ -181,13 +237,13 @@ function lineChart(id,ds,v,tipText,label){
   hit.onmouseleave=()=>{hideTip();xh.style.display='none';dot.style.display='none'};
 }
 
-function barChart(id,c,label){
-  const max=Math.max(1,...c.map(d=>d[1])),W=500,row=26,L=150,H=Math.max(row,c.length*row);
+function barChart(id,c,label,L=150){
+  const max=Math.max(1,...c.map(d=>d[1])),W=500,row=26,H=Math.max(row,c.length*row);
   let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">`;
   c.forEach(([k,n],i)=>{const w=Math.max(n?3:0,(W-L-56)*n/max),yy=i*row;
     s+=`<g class="b" data-t="${esc(k)}: ${n.toLocaleString()}"><rect x="0" y="${yy}" width="${W}" height="${row}" fill="transparent"/>
     <text x="${L-8}" y="${yy+17}" text-anchor="end" style="fill:var(--ink2)">${esc(k)}</text>
-    <path d="M${L},${yy+5}h${Math.max(0,w-4)}a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-${Math.max(0,w-4)}z" fill="var(--s1)"/>
+    ${n?`<path d="M${L},${yy+5}h${Math.max(0,w-4)}a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-${Math.max(0,w-4)}z" fill="var(--s1)"/>`:''}
     <text x="${L+w+6}" y="${yy+17}" style="fill:var(--ink2);font-variant-numeric:tabular-nums">${n.toLocaleString()}</text></g>`});
   $(id).innerHTML=s+'</svg>';
   $(id).querySelectorAll('.b').forEach(g=>{g.onmousemove=e=>showTip(e,esc(g.dataset.t));g.onmouseleave=hideTip});
@@ -245,10 +301,10 @@ function topList(geo){
   const t=geo.filter(r=>r.severity>=4).slice(0,15);
   $('top').innerHTML=t.length?'<div class="heatwrap"><table class="list"><tr><th>Sev.</th><th>Headline</th><th>Where</th><th>Type</th><th>Source</th></tr>'+t.map(r=>
    `<tr><td class="sev" style="color:${r.severity>=5?'var(--crit)':'var(--ink)'}">${r.severity>=5?'▲ ':''}${r.severity}</td>
-    <td>${r.link?`<a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.title)}</a>`:esc(r.title)}${r.reason&&!r.demo?`<div class="note" style="margin:2px 0 0">${esc(r.reason)}</div>`:''}</td>
+    <td>${r.link?`<a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.title)}</a>`:esc(r.title)}${r.reason&&!r.demo?`<div class="note" style="margin:2px 0 0">${esc(r.reason)}</div>`:''}${themesOf(r).length?`<div>${pills(r)}</div>`:''}</td>
     <td>${esc(r.country)}</td><td>${esc(D.labels[r.category])}</td><td>${esc(r.source)}</td></tr>`).join('')+'</table></div>':'<p class="note">None in this range.</p>';
 }
-$('fRange').onchange=render;$('fRegion').onchange=render;render();
+$('fRange').onchange=render;$('fRegion').onchange=render;$('fLens').onchange=render;render();
 </script></body></html>"""
 
 if __name__ == "__main__":

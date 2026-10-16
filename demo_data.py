@@ -21,6 +21,9 @@ _CATS = {
     "not_geopolitical": (0, 0),
 }
 _CAT_WEIGHTS = [14, 10, 4, 10, 9, 6, 10, 4, 7, 12]
+_ENERGY = ["supply_routes", "russia_energy", "critical_minerals", "arctic",
+           "infrastructure_attacks", "other_energy"]
+_CHOKE = ["Strait of Hormuz", "Red Sea & Suez", "Baltic Sea", "Black Sea", "Arctic & Northern Sea Route"]
 _SOURCES = ["BBC World", "Le Monde International", "Al Jazeera", "The Guardian World"]
 
 
@@ -34,7 +37,12 @@ def _make():
         sev = _rng.randint(lo, hi)
         days_ago = _rng.randint(0, 29)
         title = f"[DEMO] Synthetic {cat.replace('_', ' ')} item — {country}"
-        rows.append((days_ago, _rng.choice(_SOURCES), title, country, region, cat, sev))
+        themes, cp = [], ""
+        if cat != "not_geopolitical" and _rng.random() < 0.3:
+            themes = sorted(_rng.sample(_ENERGY, _rng.choice([1, 1, 2])), key=_ENERGY.index)
+            if "supply_routes" in themes or "arctic" in themes:
+                cp = _rng.choice(_CHOKE)
+        rows.append((days_ago, _rng.choice(_SOURCES), title, country, region, cat, sev, themes, cp))
     return rows
 
 
