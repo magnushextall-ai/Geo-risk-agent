@@ -112,11 +112,14 @@ def classify(client, item):
     categories = "\n".join(f"- {k}: {v}" for k, v in config.CATEGORIES.items())
     msg = client.messages.create(
         model=config.MODEL,
-        max_tokens=300,
+        max_tokens=2000,  # room for the model's thinking as well as its answer
         messages=[{"role": "user", "content": PROMPT.format(categories=categories, **item)}],
     )
-    text = msg.content[0].text.strip()
+    # The reply can contain several blocks (e.g. thinking first); use only the text ones.
+    text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
     start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < 0:
+        raise ValueError(f"no JSON in reply (stop_reason={msg.stop_reason})")
     result = json.loads(text[start : end + 1])
     if result.get("category") not in config.CATEGORIES:
         result["category"] = "not_geopolitical"
