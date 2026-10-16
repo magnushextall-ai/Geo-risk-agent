@@ -127,7 +127,12 @@ def classify(client, item):
 def explain_error(e):
     """Turn an API error into a plain-English reason and fix."""
     text = str(e)
+    if e.__cause__ is not None:
+        text += f" ({type(e.__cause__).__name__}: {e.__cause__})"
     low = text.lower()
+    if "illegal header" in low:
+        return ("The API key contains a space or invalid character. Paste it again into the GitHub "
+                "secret ANTHROPIC_API_KEY, copying only the key itself.")
     if "credit balance" in low:
         return ("Your Anthropic account has no credit. Add credit under Billing at "
                 "console.anthropic.com, then run the workflow again.")
@@ -159,13 +164,16 @@ def run_live():
         db.commit()
         db.close()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip().strip('"\'')  # tolerate stray spaces, line breaks or quotes
+    if not key:
         msg = ("No API key found. Add it as the GitHub secret ANTHROPIC_API_KEY "
                "(Settings > Secrets and variables > Actions).")
         print(f"\n*** NEWS ANALYSIS FAILED: {msg}\n")
         finish(0, 0, 0, 0, msg)
         return
-    client = anthropic.Anthropic()
+    if not key.startswith("sk-ant-"):
+        print("  ! Warning: the API key does not start with 'sk-ant-'; check it was copied correctly.")
+    client = anthropic.Anthropic(api_key=key)
 
     print("Fetching feeds...")
     items = fetch_feeds()
