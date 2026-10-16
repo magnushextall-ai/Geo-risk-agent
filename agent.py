@@ -11,6 +11,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,17 @@ CREATE TABLE IF NOT EXISTS articles (
     severity    INTEGER,            -- 0 = not geopolitical, 1 = minor ... 5 = critical
     reason      TEXT,
     demo        INTEGER DEFAULT 0   -- 1 for synthetic sample rows
+);
+"""
+
+RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    started_at  TEXT,
+    fetched     INTEGER,
+    new_items   INTEGER,
+    classified  INTEGER,
+    failed      INTEGER,
+    error       TEXT     -- plain-English reason if the news analysis failed
 );
 """
 
@@ -112,28 +124,75 @@ def classify(client, item):
     return result
 
 
+def explain_error(e):
+    """Turn an API error into a plain-English reason and fix."""
+    text = str(e)
+    low = text.lower()
+    if "credit balance" in low:
+        return ("Your Anthropic account has no credit. Add credit under Billing at "
+                "console.anthropic.com, then run the workflow again.")
+    if "x-api-key" in low or "authentication" in low or "401" in low:
+        return ("The API key was rejected. Create a new key at console.anthropic.com and paste it "
+                "into the GitHub secret ANTHROPIC_API_KEY (Settings > Secrets and variables > Actions).")
+    if "not_found" in low or "model" in low and "404" in low:
+        return f"The model '{config.MODEL}' was not found. Check MODEL in config.py."
+    if "permission" in low or "403" in low:
+        return "The API key does not have permission to use this model. Check your Console account."
+    if "rate" in low and "limit" in low or "429" in low:
+        return "Hit the API rate limit. It should work on the next run."
+    return text[:300]
+
+
 def run_live():
     from dotenv import load_dotenv
     import anthropic
 
     load_dotenv()
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     db = connect()
+    db.execute(RUNS_SCHEMA)
     db.execute("DELETE FROM articles WHERE demo = 1")  # clear any demo rows
+    started = datetime.now(timezone.utc).isoformat()
+
+    def finish(fetched, new_count, ok, failed, error):
+        db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?)",
+                   (started, fetched, new_count, ok, failed, error))
+        db.commit()
+        db.close()
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        msg = ("No API key found. Add it as the GitHub secret ANTHROPIC_API_KEY "
+               "(Settings > Secrets and variables > Actions).")
+        print(f"\n*** NEWS ANALYSIS FAILED: {msg}\n")
+        finish(0, 0, 0, 0, msg)
+        return
+    client = anthropic.Anthropic()
 
     print("Fetching feeds...")
     items = fetch_feeds()
     new = [i for i in items if i["link"] and not db.execute(
         "SELECT 1 FROM articles WHERE id = ?", (article_id(i["link"]),)).fetchone()]
-    print(f"{len(new)} new articles to classify")
+    print(f"{len(items)} items fetched, {len(new)} new articles to classify")
+    if not items:
+        msg = "Could not read any of the news feeds."
+        print(f"\n*** NEWS ANALYSIS FAILED: {msg}\n")
+        finish(0, 0, 0, 0, msg)
+        return
 
     now = datetime.now(timezone.utc).isoformat()
+    ok = failed = 0
+    first_error = None
     for n, item in enumerate(new, 1):
         try:
             r = classify(client, item)
         except Exception as e:  # keep going if one item fails
+            failed += 1
+            first_error = first_error or explain_error(e)
             print(f"  ! skipped '{item['title'][:60]}': {e}")
+            if ok == 0 and failed >= 3:  # same error every time: stop wasting time
+                print("  First three items all failed, so stopping.")
+                break
             continue
+        ok += 1
         db.execute(
             "INSERT OR IGNORE INTO articles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)",
             (article_id(item["link"]), item["source"], item["title"], item["summary"],
@@ -142,7 +201,13 @@ def run_live():
         )
         print(f"  [{n}/{len(new)}] {r['severity']} {r['category']:<22} {item['title'][:60]}")
         db.commit()
-    db.close()
+
+    error = first_error if ok == 0 and failed else None
+    if error:
+        print(f"\n*** NEWS ANALYSIS FAILED: {error}\n")
+    else:
+        print(f"Classified {ok} articles ({failed} skipped)")
+    finish(len(items), len(new), ok, failed, error)
 
 
 def run_demo():

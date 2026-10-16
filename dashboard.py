@@ -21,17 +21,23 @@ def load():
         "SELECT source, title, link, fetched_at, country, region, category, severity, reason, demo "
         "FROM articles ORDER BY fetched_at DESC")]
     try:
+        run = db.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
+        run = dict(run) if run else None
+    except sqlite3.OperationalError:
+        run = None
+    try:
         gdelt = [dict(r) for r in db.execute(
             "SELECT day, country, region, category, events, mentions, goldstein FROM gdelt_daily")]
     except sqlite3.OperationalError:  # GDELT not loaded yet
         gdelt = []
     db.close()
-    return rows, gdelt
+    return rows, gdelt, run
 
 
 def build():
-    rows, gdelt = load()
+    rows, gdelt, run = load()
     data = {
+        "run": run,
         "rows": rows,
         "gdelt": gdelt,
         "labels": LABELS,
@@ -120,7 +126,8 @@ const day=s=>s.slice(0,10);
 const regions=[...new Set([...D.rows,...(D.gdelt||[])].map(r=>r.region).filter(Boolean))].sort();
 regions.forEach(r=>$('fRegion').insertAdjacentHTML('beforeend',`<option>${esc(r)}</option>`));
 $('foot').textContent=`Generated ${D.generated}. Severity and categories are model judgements and can be wrong; check sources before relying on them.`;
-if(D.demo)$('banner').innerHTML='<div class="banner"><b>Demo data.</b> These rows are synthetic placeholders, not real news. Run <code>python agent.py</code> with an API key to replace them.</div>';
+if(D.run&&D.run.error)$('banner').innerHTML=`<div class="banner" style="border-left-color:var(--crit)"><b>News analysis failed on the last run</b> (${esc(new Date(D.run.started_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}))}). ${esc(D.run.error)} The GDELT section is unaffected.</div>`;
+else if(D.demo)$('banner').innerHTML='<div class="banner"><b>Demo data.</b> These rows are synthetic placeholders, not real news. Run <code>python agent.py</code> with an API key to replace them.</div>';
 
 function render(){
   const days=+$('fRange').value, reg=$('fRegion').value;
