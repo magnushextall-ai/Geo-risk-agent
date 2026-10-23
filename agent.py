@@ -306,6 +306,29 @@ def run_demo():
     print(f"Loaded {len(SAMPLES)} synthetic demo rows into {config.DB_PATH}")
 
 
+def run_analysis():
+    """Group headlines into events, then make, resolve and score forecasts."""
+    import events
+    import forecasts
+    import llm
+
+    client = llm.get_client()
+    if client is None:
+        return
+    db = connect()
+    try:
+        events.update(db, client)
+    except Exception as e:  # never let this stop the dashboard being built
+        print(f"  ! event grouping failed: {e}")
+    try:
+        forecasts.ensure_schema(db)
+        forecasts.resolve(db, client)
+        forecasts.make(db, client, events.summarise(db), events.gdelt_changes(db))
+    except Exception as e:
+        print(f"  ! forecasting failed: {e}")
+    db.close()
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--demo", action="store_true", help="load synthetic sample data instead of live feeds")
@@ -320,6 +343,7 @@ if __name__ == "__main__":
             gdelt.update()
         except Exception as e:  # the news part still works if GDELT is down
             print(f"  ! GDELT update failed: {e}")
+        run_analysis()
     from dashboard import build
     build()
     print(f"Dashboard written to {config.DASHBOARD_PATH}")

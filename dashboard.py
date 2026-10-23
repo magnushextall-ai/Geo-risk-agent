@@ -16,11 +16,15 @@ LABELS = {
 
 def load():
     from agent import connect  # also adds any newer columns to an older database
+    import events
     db = connect()
+    events.ensure_schema(db)
     db.row_factory = sqlite3.Row
     rows = [dict(r) for r in db.execute(
         "SELECT source, title, link, fetched_at, country, region, category, severity, reason, demo, "
-        "energy_themes, chokepoint, energy_note FROM articles ORDER BY fetched_at DESC")]
+        "energy_themes, chokepoint, energy_note, event_id FROM articles ORDER BY fetched_at DESC")]
+    import forecasts
+    extra = {"events": events.summarise(db), "changes": events.gdelt_changes(db), "fc": forecasts.summary(db)}
     try:
         run = db.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
         run = dict(run) if run else None
@@ -32,12 +36,13 @@ def load():
     except sqlite3.OperationalError:  # GDELT not loaded yet
         gdelt = []
     db.close()
-    return rows, gdelt, run
+    return rows, gdelt, run, extra
 
 
 def build():
-    rows, gdelt, run = load()
+    rows, gdelt, run, extra = load()
     data = {
+        **extra,
         "run": run,
         "rows": rows,
         "gdelt": gdelt,
@@ -75,7 +80,7 @@ h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em} h2{font-size:15px;margin
 .banner{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--warn);border-radius:8px;padding:10px 14px;margin-bottom:16px;color:var(--ink2)}
 .filters{display:flex;gap:8px;flex-wrap:wrap}
 select{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
 .tile .v{font-size:30px;font-weight:600;margin-top:4px}.tile .k{color:var(--ink2)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
@@ -102,6 +107,26 @@ table.list{width:100%;border-collapse:collapse}
 .cp .h a{color:var(--ink2)}
 h3{font-size:13px;margin:0;color:var(--ink2);font-weight:600}
 .lensnote{font-size:12px;color:var(--muted);margin:0 0 8px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media (max-width:820px){.two{grid-template-columns:1fr}}
+.two>*{min-width:0}
+.chg{list-style:none;margin:8px 0 0;padding:0}
+.chg li{padding:8px 0;border-bottom:1px solid var(--grid);display:flex;gap:10px;align-items:baseline}
+.chg li:last-child{border-bottom:0}
+.chg .ic{width:16px;flex:none;text-align:center;font-weight:700}
+.chg .t{font-weight:600}.chg .d{color:var(--ink2);font-size:12px}
+.st{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 8px;white-space:nowrap;border:1px solid var(--border);color:var(--ink2)}
+.st.up{color:var(--crit);border-color:var(--crit)}.st.new{color:var(--ink);border-color:var(--ink)}
+.mini{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0 14px}
+.mini .cp .n{font-size:22px}
+.evrow{cursor:pointer}.evrow:hover td{background:var(--grid)}
+.evrow td:first-child{white-space:nowrap}
+.evd td{padding:4px 8px 12px}
+.evd ul{margin:0;padding-left:18px}.evd li{margin:3px 0;font-size:13px}
+.spark{display:block}
+.pct{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+details summary{cursor:pointer;color:var(--ink2);font-size:13px;margin-top:10px}
+code{font-size:12px;background:var(--grid);padding:1px 4px;border-radius:4px}
 .legend{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;margin-top:8px}
 .legend span{width:18px;height:10px;border-radius:2px;display:inline-block}
 </style></head><body><main>
@@ -112,11 +137,24 @@ h3{font-size:13px;margin:0;color:var(--ink2);font-weight:600}
 <select id="fLens" aria-label="Lens"><option value="">Lens: all risks</option><option value="*">Lens: energy security</option></select></div></header>
 <div id="banner"></div>
 <section class="tiles" id="tiles"></section>
+<section class="card" style="margin-bottom:12px"><h2>What's changing</h2>
+<p class="note">Compared with each story's and each country's own recent history, not with each other.</p>
+<div class="two"><div><h3>News events</h3><ul class="chg" id="chgNews"></ul></div>
+<div><h3>Unusual conflict activity (GDELT)</h3><ul class="chg" id="chgGdelt"></ul></div></div></section>
+<section class="card" style="margin-bottom:12px"><h2>Forecasts</h2>
+<p class="note">Each week the agent makes specific yes/no forecasts with deadlines. When a deadline passes it checks the news to see what happened, and every forecaster is scored. Brier score: lower is better; 0 is perfect, always saying 50% scores 0.25.</p>
+<div class="mini" id="fcScore"></div>
+<h3>Open forecasts</h3><div id="fcOpen"></div>
+<h3 style="margin-top:16px">Resolved</h3><div id="fcDone"></div>
+<details><summary>How to add your own forecasts</summary><p class="note" style="margin-top:6px">Open <code>my_forecasts.csv</code> in the GitHub repository, click the pencil icon, and add a line with the forecast ID and your probability, for example <code>F261022-1,35%</code>. Add <code>yes</code> or <code>no</code> as a third value to settle an outcome yourself. Your forecasts appear here after the next daily run.</p></details></section>
+<section class="card" style="margin-bottom:12px"><h2>Tracked events</h2>
+<p class="note">Coverage grouped into distinct stories by Claude, over the last 14 days. Click a row to see its headlines. Status compares the last 3 days with the 7 before: <b>Escalating</b> = severity up by at least a point (with 2+ reports) or coverage up 50%+ (with 4+ reports); <b>Cooling</b> = severity down a point or coverage halved; <b>New</b> = first reported in the last 3 days; <b>Quiet</b> = no reports in 3 days.</p>
+<div id="events"></div></section>
 <section class="card" style="margin-bottom:12px"><h2>Daily risk index</h2>
-<p class="note">Sum of severity across all geopolitical items each day. Higher means more, or more serious, events.</p><div id="trend"></div></section>
+<p class="note">Sum of severity across each day's distinct events (each story counted once, at its highest severity). Higher means more, or more serious, events.</p><div id="trend"></div></section>
 <section class="grid2">
-<div class="card"><h2>Events by risk type</h2><p class="note">Count of classified items</p><div id="cats"></div></div>
-<div class="card"><h2>Region × risk type</h2><p class="note">Count of items; darker = more</p><div class="heatwrap" id="heat"></div><div class="legend" id="hl"></div></div>
+<div class="card"><h2>Events by risk type</h2><p class="note">Distinct events</p><div id="cats"></div></div>
+<div class="card"><h2>Region × risk type</h2><p class="note">Distinct events; darker = more</p><div class="heatwrap" id="heat"></div><div class="legend" id="hl"></div></div>
 </section>
 <section class="card" style="margin-bottom:12px"><h2>Energy security lens</h2>
 <p class="note" id="enote">Headlines with an energy-security dimension, tagged by Claude on top of their main risk type.</p>
@@ -133,7 +171,7 @@ h3{font-size:13px;margin:0;color:var(--ink2);font-weight:600}
 <div class="card"><h2>GDELT: most conflict events by country</h2><p class="note">Total events in the selected range</p><div id="gcountries"></div></div>
 <div class="card"><h2>GDELT: events by risk type</h2><p class="note">Total events in the selected range</p><div id="gcats"></div></div>
 </section>
-<section class="card"><h2>Highest-severity items</h2><p class="note">Severity 4–5, newest first</p><div id="top"></div></section>
+<section class="card"><h2>Highest-severity items</h2><p class="note">Severity 4–5, newest first, one headline per event</p><div id="top"></div></section>
 <p class="note" id="foot" style="margin-top:16px"></p>
 </main><div class="tip" id="tip"></div>
 <script>
@@ -143,6 +181,7 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 function showTip(e,h){tip.innerHTML=h;tip.style.display='block';const x=Math.min(e.clientX+12,innerWidth-tip.offsetWidth-8);tip.style.left=x+'px';tip.style.top=(e.clientY+12)+'px'}
 function hideTip(){tip.style.display='none'}
 const day=s=>s.slice(0,10);
+const dedupe=list=>{const m=new Map();list.forEach(r=>{const k=r.event_id||('a:'+r.fetched_at+r.title);const c=m.get(k);if(!c||r.severity>c.severity)m.set(k,r)});return [...m.values()]};
 const themesOf=r=>(r.energy_themes||'').split(',').filter(Boolean);
 Object.entries(D.energy||{}).forEach(([k,l])=>$('fLens').insertAdjacentHTML('beforeend',`<option value="${k}">Energy: ${esc(l)}</option>`));
 const pills=r=>themesOf(r).map(t=>`<span class="pill">${esc((D.energy||{})[t]||t)}</span>`).join('')+(r.chokepoint?`<span class="pill">${esc(r.chokepoint)}</span>`:'');
@@ -159,18 +198,64 @@ function render(){
   const inLens=r=>!lens||(lens==='*'?themesOf(r).length>0:themesOf(r).includes(lens));
   const base=D.rows.filter(r=>r.fetched_at>=cutoff&&(!reg||r.region===reg));
   const all=base.filter(inLens);
-  const geo=all.filter(r=>r.category!=='not_geopolitical');
+  const geoItems=all.filter(r=>r.category!=='not_geopolitical');
+  const geo=dedupe(geoItems);
   $('glens').style.display=lens?'':'none';
   // tiles
   const hi=geo.filter(r=>r.severity>=4).length;
   const byReg={};geo.forEach(r=>byReg[r.region]=(byReg[r.region]||0)+r.severity);
   const topReg=Object.entries(byReg).sort((a,b)=>b[1]-a[1])[0];
   const avg=geo.length?(geo.reduce((a,r)=>a+r.severity,0)/geo.length).toFixed(1):'–';
-  $('tiles').innerHTML=[['Items analysed',all.length],['Geopolitical items',geo.length],['High severity (4–5)',hi],['Avg severity',avg],['Most at-risk region',topReg?topReg[0]:'–']]
+  $('tiles').innerHTML=[['Headlines analysed',all.length],['Distinct events',geo.length],['High-severity events',hi],['Avg severity',avg],['Most at-risk region',topReg?topReg[0]:'–']]
    .map(([k,v])=>`<div class="card tile"><div class="k">${k}</div><div class="v" style="${String(v).length>8?'font-size:20px':''}">${esc(v)}</div></div>`).join('');
-  trend(geo,Math.min(days,60)); cats(geo); heat(geo); topList(geo);
+  trend(geoItems,Math.min(days,60)); cats(geo); heat(geo); topList(geo);
+  changing(reg); fcRender(); eventsRender(reg);
   energyRender(base,lens,Math.min(days,60));
   gdeltRender(days,reg);
+}
+
+const ST={Escalating:['▲','up'],New:['●','new'],Steady:['–',''],Cooling:['▼',''],Quiet:['○','']};
+const stPill=s=>`<span class="st ${ST[s][1]}">${ST[s][0]} ${s}</span>`;
+const fmtDay=d=>new Date(d+'T12:00:00Z').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+const pct=p=>p==null?'–':Math.round(p*100)+'%';
+
+function changing(reg){
+  const ev=(D.events||[]).filter(e=>!reg||e.region===reg);
+  const hot=ev.filter(e=>e.status==='Escalating'||e.status==='New').slice(0,6);
+  const cool=ev.filter(e=>e.status==='Cooling'&&e.max_severity>=3).slice(0,2);
+  const li=(e)=>`<li><span class="ic" style="color:${e.status==='Escalating'?'var(--crit)':'var(--ink2)'}">${ST[e.status][0]}</span><div><div class="t">${esc(e.name)}</div><div class="d">${e.status} · ${esc(e.country)} · ${e.recent_reports} report${e.recent_reports==1?'':'s'} in 3 days · severity ${e.recent_severity}</div></div></li>`;
+  $('chgNews').innerHTML=[...hot,...cool].map(li).join('')||'<li><span class="d">No events reported yet in this range.</span></li>';
+  const c=D.changes||{};
+  if(!c.ready){$('chgGdelt').innerHTML=`<li><span class="d">Building a baseline: needs ${21} days of GDELT data, has ${7+(c.baseline_days||0)}.</span></li>`;return}
+  const r=(c.rising||[]).filter(x=>!reg||x.region===reg).slice(0,5), f=(c.falling||[]).filter(x=>!reg||x.region===reg).slice(0,2);
+  const g=(x,up)=>`<li><span class="ic" style="color:${up?'var(--crit)':'var(--ink2)'}">${up?'▲':'▼'}</span><div><div class="t">${esc(x.country)} <span class="pct">${x.ratio>=1?x.ratio.toFixed(1)+'×':'−'+Math.round((1-x.ratio)*100)+'%'}</span></div><div class="d">${x.recent_per_day} events/day vs usual ${x.baseline_per_day}${x.driver?' · mostly '+esc((D.labels[x.driver]||x.driver).toLowerCase()):''}</div></div></li>`;
+  $('chgGdelt').innerHTML=(r.map(x=>g(x,1)).join('')+f.map(x=>g(x,0)).join(''))||'<li><span class="d">Nothing unusual in the last 7 days.</span></li>';
+}
+
+function fcRender(){
+  const F=(D.fc||{}).forecasts||[], S=(D.fc||{}).score||{};
+  const tile=(k,v,sub)=>`<div class="cp"><div class="k">${k}</div><div class="n">${v}</div><div class="k">${sub}</div></div>`;
+  $('fcScore').innerHTML=tile('Open forecasts',S.open||0,'awaiting their deadline')+tile('Resolved',S.resolved||0,'scored so far')
+    +tile("Claude's Brier score",S.ai==null?'–':S.ai.toFixed(3),S.resolved?`over ${S.resolved} forecast${S.resolved==1?'':'s'}`:'none resolved yet')
+    +tile('Your Brier score',S.me==null?'–':S.me.toFixed(3),S.mine_count?`Claude scored ${S.ai_on_mine.toFixed(3)} on the same ${S.mine_count}`:'add yours in my_forecasts.csv');
+  const open=F.filter(f=>f.status==='open'), done=F.filter(f=>f.status!=='open');
+  $('fcOpen').innerHTML=open.length?'<div class="heatwrap"><table class="list"><tr><th>ID</th><th>Question</th><th>By</th><th>Claude</th><th>You</th></tr>'+open.map(f=>
+    `<tr><td style="white-space:nowrap"><code>${esc(f.id)}</code></td><td><b>${esc(f.question)}</b><div class="note" style="margin:2px 0 0">Yes if: ${esc(f.criteria)}</div><div class="note" style="margin:2px 0 0">Reasoning: ${esc(f.rationale)}</div></td><td style="white-space:nowrap">${fmtDay(f.deadline)}</td><td class="pct">${pct(f.probability)}</td><td class="pct">${pct(f.my_probability)}</td></tr>`).join('')+'</table></div>'
+    :'<p class="note">The first forecasts are made on the next daily run.</p>';
+  $('fcDone').innerHTML=done.length?'<div class="heatwrap"><table class="list"><tr><th>ID</th><th>Question</th><th>Outcome</th><th>Claude</th><th>You</th></tr>'+done.map(f=>
+    `<tr><td style="white-space:nowrap"><code>${esc(f.id)}</code></td><td>${esc(f.question)}${f.resolution_note?`<div class="note" style="margin:2px 0 0">${esc(f.resolution_note)}</div>`:''}</td><td><b>${f.status==='unresolvable'?'Unresolved':f.outcome?'Yes':'No'}</b></td><td class="pct">${pct(f.probability)}${f.brier_ai!=null?`<div class="note" style="margin:0">Brier ${f.brier_ai.toFixed(2)}</div>`:''}</td><td class="pct">${pct(f.my_probability)}${f.brier_me!=null?`<div class="note" style="margin:0">Brier ${f.brier_me.toFixed(2)}</div>`:''}</td></tr>`).join('')+'</table></div>'
+    :'<p class="note">None yet. The first forecasts resolve 2–8 weeks after they are made.</p>';
+}
+
+function spark(d){const W=84,H=22,m=Math.max(1,...d),bw=W/d.length;return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${d.map((v,i)=>v?`<rect x="${i*bw+0.5}" y="${H-Math.max(2,H*v/m)}" width="${bw-1.5}" height="${Math.max(2,H*v/m)}" rx="1" fill="var(--s1)"/>`:`<rect x="${i*bw+0.5}" y="${H-1}" width="${bw-1.5}" height="1" fill="var(--grid)"/>`).join('')}</svg>`}
+
+function eventsRender(reg){
+  const ev=(D.events||[]).filter(e=>!reg||e.region===reg).slice(0,25);
+  $('events').innerHTML=ev.length?'<div class="heatwrap"><table class="list"><tr><th>Status</th><th>Event</th><th>Reports</th><th>Max sev.</th><th>Last 14 days</th></tr>'+ev.map((e,i)=>
+    `<tr class="evrow" data-i="${i}"><td>${stPill(e.status)}</td><td><b>${esc(e.name)}</b><div class="note" style="margin:2px 0 0">${esc(e.country)} · ${e.sources} source${e.sources==1?'':'s'} · since ${fmtDay(e.first_seen)}</div></td><td class="pct">${e.reports}<div class="note" style="margin:0;font-weight:400">${e.recent_reports} in 3 days</div></td><td class="pct" style="color:${e.max_severity>=5?'var(--crit)':'var(--ink)'}">${e.max_severity>=5?'▲ ':''}${e.max_severity}</td><td>${spark(e.daily)}</td></tr>
+     <tr class="evd" id="evd${i}" style="display:none"><td></td><td colspan="4"><ul>${e.headlines.map(h=>`<li>${fmtDay(h.day)} · ${esc(h.source)} · ${h.link?`<a href="${esc(h.link)}" target="_blank" rel="noopener">${esc(h.title)}</a>`:esc(h.title)}</li>`).join('')}</ul></td></tr>`).join('')+'</table></div>'
+    :'<p class="note">Events appear here after the next daily run groups the headlines.</p>';
+  $('events').querySelectorAll('.evrow').forEach(r=>r.onclick=()=>{const d=$('evd'+r.dataset.i);d.style.display=d.style.display==='none'?'':'none'});
 }
 
 function energyRender(base,lens,n){
@@ -252,7 +337,7 @@ function barChart(id,c,label,L=150){
 function trend(geo,n){
   const W=1000,H=220,P={l:36,r:12,t:12,b:26};
   const ds=[];for(let i=n-1;i>=0;i--)ds.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
-  const v=ds.map(d=>geo.filter(r=>day(r.fetched_at)===d).reduce((a,r)=>a+r.severity,0));
+  const v=ds.map(d=>dedupe(geo.filter(r=>day(r.fetched_at)===d)).reduce((a,r)=>a+r.severity,0));
   const max=Math.max(5,...v), nice=Math.ceil(max/5)*5;
   const x=i=>P.l+(ds.length<2?0:i*(W-P.l-P.r)/(ds.length-1)), y=t=>P.t+(H-P.t-P.b)*(1-t/nice);
   let g='';for(let k=0;k<=4;k++){const t=nice*k/4;g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--${k?'grid':'axis'})"/><text x="${P.l-6}" y="${y(t)+4}" text-anchor="end" style="font-variant-numeric:tabular-nums">${t}</text>`}

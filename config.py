@@ -69,3 +69,23 @@ CHOKEPOINTS = ["Strait of Hormuz", "Red Sea & Suez", "Baltic Sea", "Black Sea",
 
 # Max previously stored headlines to tag with energy themes per run (one-off catch-up).
 ENERGY_BACKFILL_MAX = 200
+
+# ---------------------------------------------------------------------------
+# Events and change detection (events.py)
+EVENT_BATCH = 40            # headlines grouped per Claude call
+EVENT_MEMORY_DAYS = 10      # events seen in this many days can absorb new headlines
+EVENT_MAX_KNOWN = 120       # max existing events shown to Claude per call
+EVENT_TRACK_DAYS = 14       # events shown on the dashboard: reported in the last N days
+CHANGE_MIN_BASELINE_DAYS = 14   # GDELT days needed before the last 7 days to judge "unusual"
+CHANGE_MIN_DAILY_EVENTS = 5     # ignore countries with fewer GDELT events per day than this
+CHANGE_RATIO = 1.5              # flag if the last 7 days are 1.5x (or 1/1.5) the country's norm...
+CHANGE_Z = 2.0                  # ...and the change is unlikely to be random noise
+
+# ---------------------------------------------------------------------------
+# Forecasts (forecasts.py)
+FORECASTS_PER_ROUND = 4      # new forecasts each round
+FORECAST_EVERY_DAYS = 7      # how often a new round is made
+FORECAST_MIN_DAYS = 14       # earliest deadline, days ahead
+FORECAST_MAX_DAYS = 60       # latest deadline, days ahead
+FORECAST_GIVE_UP_DAYS = 14   # mark as unresolvable if still unclear this long after the deadline
+MY_FORECASTS_PATH = "my_forecasts.csv"   # where you record your own probabilities
