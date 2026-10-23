@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 """
 
+# Columns added later; connect() adds them to older databases.
+ENERGY_COLUMNS = {
+    "energy_themes": "TEXT",  # comma-separated theme keys; '' = none; NULL = not yet tagged
+    "chokepoint": "TEXT",     # one of config.CHOKEPOINTS, or ''
+    "energy_note": "TEXT",    # one sentence on the energy-security implication
+}
+
 RUNS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     started_at  TEXT,
@@ -65,7 +72,14 @@ Return ONLY a JSON object, no other text:
   "region": "<one of: Europe, Middle East, Africa, Asia-Pacific, Americas, Russia & Central Asia, Global>",
   "category": "<category key>",
   "severity": <0-5>,
-  "reason": "<one short sentence explaining the rating>"}}
+  "reason": "<one short sentence explaining the rating>",
+  "energy_themes": [<zero or more energy theme keys from the list below>],
+  "chokepoint": "<one of: {chokepoints}, or none>",
+  "energy_note": "<if any energy theme applies, one short sentence on the energy-security implication; otherwise empty>"}}
+
+Energy security themes (tag every theme that clearly applies, independent of the category above;
+use [] if the item has no material energy-security dimension):
+{energy_themes}
 
 Source: {source}
 Headline: {title}
@@ -75,7 +89,23 @@ Summary: {summary}"""
 def connect():
     db = sqlite3.connect(config.DB_PATH)
     db.execute(SCHEMA)
+    existing = {r[1] for r in db.execute("PRAGMA table_info(articles)")}
+    for col, kind in ENERGY_COLUMNS.items():
+        if col not in existing:
+            db.execute(f"ALTER TABLE articles ADD COLUMN {col} {kind}")
     return db
+
+
+def save_article(db, item, r, fetched_at, demo=0, row_id=None):
+    db.execute(
+        """INSERT OR REPLACE INTO articles (id, source, title, summary, link, published, fetched_at,
+               country, region, category, severity, reason, demo, energy_themes, chokepoint, energy_note)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (row_id or article_id(item["link"]), item["source"], item["title"], item["summary"],
+         item["link"], item["published"], fetched_at, r.get("country"), r.get("region"),
+         r["category"], r["severity"], r.get("reason"), demo,
+         ",".join(r.get("energy_themes", [])), r.get("chokepoint", ""), r.get("energy_note", "")),
+    )
 
 
 def article_id(link):
@@ -110,10 +140,13 @@ def _strip_html(text):
 
 def classify(client, item):
     categories = "\n".join(f"- {k}: {v}" for k, v in config.CATEGORIES.items())
+    energy = "\n".join(f"- {k}: {label}. {desc}" for k, (label, desc) in config.ENERGY_THEMES.items())
+    prompt = PROMPT.format(categories=categories, energy_themes=energy,
+                           chokepoints=", ".join(config.CHOKEPOINTS), **item)
     msg = client.messages.create(
         model=config.MODEL,
         max_tokens=2000,  # room for the model's thinking as well as its answer
-        messages=[{"role": "user", "content": PROMPT.format(categories=categories, **item)}],
+        messages=[{"role": "user", "content": prompt}],
     )
     # The reply can contain several blocks (e.g. thinking first); use only the text ones.
     text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
@@ -124,7 +157,40 @@ def classify(client, item):
     if result.get("category") not in config.CATEGORIES:
         result["category"] = "not_geopolitical"
     result["severity"] = max(0, min(5, int(result.get("severity", 0))))
+    themes = result.get("energy_themes") or []
+    if isinstance(themes, str):
+        themes = [t.strip() for t in themes.split(",")]
+    result["energy_themes"] = [t for t in config.ENERGY_THEMES if t in themes]  # keep valid, in fixed order
+    cp = (result.get("chokepoint") or "").strip()
+    result["chokepoint"] = next((c for c in config.CHOKEPOINTS if c.lower() == cp.lower()), "")
+    result["energy_note"] = (result.get("energy_note") or "").strip() if result["energy_themes"] else ""
     return result
+
+
+def backfill_energy(db, client):
+    """Tag headlines stored before the energy lens existed (runs once per old headline)."""
+    rows = db.execute(
+        "SELECT id, source, title, summary FROM articles WHERE energy_themes IS NULL AND demo = 0 "
+        "ORDER BY fetched_at DESC LIMIT ?", (config.ENERGY_BACKFILL_MAX,)).fetchall()
+    if not rows:
+        return
+    print(f"Adding energy tags to {len(rows)} earlier headlines...")
+    done = failed = 0
+    for row_id, source, title, summary in rows:
+        try:
+            r = classify(client, {"source": source, "title": title, "summary": summary or ""})
+        except Exception as e:
+            failed += 1
+            print(f"  ! energy tag skipped '{title[:60]}': {e}")
+            if done == 0 and failed >= 3:
+                break
+            continue
+        db.execute("UPDATE articles SET energy_themes = ?, chokepoint = ?, energy_note = ? WHERE id = ?",
+                   (",".join(r.get("energy_themes", [])), r.get("chokepoint", ""),
+                    r.get("energy_note", ""), row_id))
+        db.commit()
+        done += 1
+    print(f"  tagged {done} ({failed} skipped)")
 
 
 def explain_error(e):
@@ -204,13 +270,9 @@ def run_live():
                 break
             continue
         ok += 1
-        db.execute(
-            "INSERT OR IGNORE INTO articles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)",
-            (article_id(item["link"]), item["source"], item["title"], item["summary"],
-             item["link"], item["published"], now, r.get("country"), r.get("region"),
-             r["category"], r["severity"], r.get("reason")),
-        )
-        print(f"  [{n}/{len(new)}] {r['severity']} {r['category']:<22} {item['title'][:60]}")
+        save_article(db, item, r, now)
+        tag = f" [energy: {','.join(r['energy_themes'])}]" if r.get("energy_themes") else ""
+        print(f"  [{n}/{len(new)}] {r['severity']} {r['category']:<22} {item['title'][:60]}{tag}")
         db.commit()
 
     error = first_error if ok == 0 and failed else None
@@ -218,6 +280,10 @@ def run_live():
         print(f"\n*** NEWS ANALYSIS FAILED: {error}\n")
     else:
         print(f"Classified {ok} articles ({failed} skipped)")
+        try:
+            backfill_energy(db, client)
+        except Exception as e:  # never let the catch-up stop today's results being saved
+            print(f"  ! energy catch-up stopped: {e}")
     finish(len(items), len(new), ok, failed, error)
 
 
@@ -228,16 +294,39 @@ def run_demo():
     db = connect()
     db.execute("DELETE FROM articles WHERE demo = 1")
     today = datetime.now(timezone.utc)
-    for i, (days_ago, source, title, country, region, cat, sev) in enumerate(SAMPLES):
+    for i, (days_ago, source, title, country, region, cat, sev, themes, cp) in enumerate(SAMPLES):
         ts = (today - timedelta(days=days_ago)).isoformat()
-        db.execute(
-            "INSERT OR REPLACE INTO articles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
-            (f"demo{i}", source, title, "", "", ts, ts, country, region, cat, sev,
-             "Synthetic demo row"),
-        )
+        item = {"source": source, "title": title, "summary": "", "link": "", "published": ts}
+        r = {"country": country, "region": region, "category": cat, "severity": sev,
+             "reason": "Synthetic demo row", "energy_themes": themes, "chokepoint": cp,
+             "energy_note": "Synthetic demo row" if themes else ""}
+        save_article(db, item, r, ts, demo=1, row_id=f"demo{i}")
     db.commit()
     db.close()
     print(f"Loaded {len(SAMPLES)} synthetic demo rows into {config.DB_PATH}")
+
+
+def run_analysis():
+    """Group headlines into events, then make, resolve and score forecasts."""
+    import events
+    import forecasts
+    import llm
+
+    client = llm.get_client()
+    if client is None:
+        return
+    db = connect()
+    try:
+        events.update(db, client)
+    except Exception as e:  # never let this stop the dashboard being built
+        print(f"  ! event grouping failed: {e}")
+    try:
+        forecasts.ensure_schema(db)
+        forecasts.resolve(db, client)
+        forecasts.make(db, client, events.summarise(db), events.gdelt_changes(db))
+    except Exception as e:
+        print(f"  ! forecasting failed: {e}")
+    db.close()
 
 
 if __name__ == "__main__":
@@ -254,6 +343,7 @@ if __name__ == "__main__":
             gdelt.update()
         except Exception as e:  # the news part still works if GDELT is down
             print(f"  ! GDELT update failed: {e}")
+        run_analysis()
     from dashboard import build
     build()
     print(f"Dashboard written to {config.DASHBOARD_PATH}")

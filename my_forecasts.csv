@@ -1,0 +1,8 @@
+# YOUR FORECASTS
+# Add one line per forecast you want to make, using the ID shown on the dashboard.
+#   my_probability: your chance that the answer is YES, e.g. 35% (or 0.35)
+#   outcome_override: leave blank, or write yes/no to decide the outcome yourself
+#   note: optional, your reasoning
+# Example (delete the # to use it):
+# F261022-1,35%,,Talks have stalled twice before
+id,my_probability,outcome_override,note
