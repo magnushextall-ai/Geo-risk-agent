@@ -26,6 +26,10 @@ CATEGORIES = {
 # Model used for classification. A small model is cheap and accurate enough for headlines.
 MODEL = "claude-haiku-5-5"
 
+# Your name and a link (e.g. LinkedIn) shown on the dashboard. Leave blank to hide.
+AUTHOR_NAME = ""
+AUTHOR_URL = ""
+
 DB_PATH = "risk.db"
 DASHBOARD_PATH = "index.html"  # index.html so GitHub Pages shows it as the home page
 

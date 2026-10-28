@@ -46,8 +46,9 @@ Forecasts already open (do not duplicate these):
 {open}
 
 Write {n} new forecasting questions about these situations. Each must:
-- be a yes/no question about something that may or may not happen by a deadline between
-  {min_date} and {max_date};
+- be a yes/no question about whether something happens between today and a deadline you choose,
+  phrased "... by <deadline>?"; the deadline must fall between {min_date} and {max_date} (do not
+  ask about a window that starts in the future);
 - have resolution criteria precise enough that a neutral reader of major international news
   (BBC, Reuters, Le Monde, Al Jazeera) could later decide YES or NO without argument;
 - be genuinely uncertain: your probability must be between 0.05 and 0.95;
