@@ -10,7 +10,7 @@ An AI agent that reads headlines from major international news outlets (BBC, Le 
 4. **Cross-check with GDELT**: downloads the free daily event files from the [GDELT Project](https://www.gdeltproject.org/), which machine-codes world news into events, and keeps conflict-type events (CAMEO codes 13–20: threats, protests, force posture, sanctions, coercion, assaults, fighting, mass violence) reported by at least two sources. These are mapped to the same risk categories and stored as daily counts per country (`gdelt.py`). Because GDELT keeps a full archive, the first run backfills the last 30 days.
 5. **Group into events**: Claude groups repeat coverage of the same story (different outlets, different days, live blogs) into distinct events, so each story is counted once (`events.py`).
 6. **Forecast**: once a week Claude makes specific yes/no forecasts with deadlines; past deadlines are resolved from the stored headlines and scored (`forecasts.py`).
-7. **Visualise**: builds the dashboard (`index.html`), showing what's changing, forecasts and scores, tracked events, a daily risk index, events by type, a region × risk-type heatmap, an energy security section and the highest-severity items, filterable by date range, region and lens.
+7. **Visualise**: builds the dashboard (`index.html`), showing a globe of events by severity, what's changing, forecasts and scores, tracked events, a daily risk index, events by type, a region × risk-type heatmap, an energy security section and the highest-severity items, filterable by date range, region and lens.
 
 ## What's changing: change detection
 
@@ -26,6 +26,12 @@ Tracking the past is easy; the test of an analytical tool is whether it can anti
 - **Resolution:** after the deadline, Claude reads the relevant stored headlines and decides YES, NO or *unclear*. It is told that missing coverage is not evidence of NO. Questions still unclear two weeks after the deadline are marked unresolvable and excluded from scoring.
 - **Human forecaster:** I add my own probabilities (and can override an outcome) in `my_forecasts.csv`.
 - **Scoring:** each forecast gets a [Brier score](https://en.wikipedia.org/wiki/Brier_score), (probability − outcome)², where 0 is perfect and always saying 50% scores 0.25. The dashboard compares Claude and me on the same questions.
+
+## Globe
+
+An interactive globe (drag to rotate, scroll or pinch to zoom) shows every event from the last 14 days at the place it is happening. Claude gives each event a specific location (a city, sea area or chokepoint) and coordinates; events not yet located are placed at their country's centre.
+
+The design guards against a common distortion: on most news maps, the places with the most coverage look the most dangerous. Here each *event* gets one marker however many times it was reported, and marker size and colour encode **severity**, not volume. Countries can be shaded by their highest-severity event (default) or by number of events, so the difference between "most reported" and "most serious" can be seen directly. Filters show only events of severity 3+, 4+ or 5, and escalating events are ringed. Built with D3 (orthographic projection) and Natural Earth boundaries from `world-atlas`.
 
 ## Energy security lens
 

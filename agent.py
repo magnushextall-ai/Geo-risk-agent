@@ -321,6 +321,10 @@ def run_analysis():
     except Exception as e:  # never let this stop the dashboard being built
         print(f"  ! event grouping failed: {e}")
     try:
+        events.geocode(db, client)
+    except Exception as e:
+        print(f"  ! locating events failed: {e}")
+    try:
         forecasts.ensure_schema(db)
         forecasts.resolve(db, client)
         forecasts.make(db, client, events.summarise(db), events.gdelt_changes(db))

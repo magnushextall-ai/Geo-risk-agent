@@ -181,6 +181,41 @@ svg text{fill:var(--muted);font-size:11px;font-family:var(--sans)}
 .cp .h{font-size:12px;color:var(--ink2);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .mini{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin:4px 0 20px}
 code{font-size:12px;background:var(--grid);padding:1px 4px;border-radius:4px}
+/* globe */
+:root{--ocean:#dde5ee;--land:#fbfcfd;--landline:#c9d2de;--sv1:#f4c7a3;--sv2:#ec9a6a;--sv3:#dc6a3c;--sv4:#b9401f;--sv5:#7d1c0c}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ocean:#0f1822;--land:#1f2733;--landline:#323c4a;--sv1:#6e3420;--sv2:#9c4a2a;--sv3:#d0653a;--sv4:#f08a5d;--sv5:#ffc6a6}}
+:root[data-theme="dark"]{--ocean:#0f1822;--land:#1f2733;--landline:#323c4a;--sv1:#6e3420;--sv2:#9c4a2a;--sv3:#d0653a;--sv4:#f08a5d;--sv5:#ffc6a6}
+.globe-wrap{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:860px){.globe-wrap{grid-template-columns:1fr}}
+.globe-stage{position:relative}
+#globe{display:block;width:100%;height:auto;overflow:hidden;touch-action:none;cursor:grab;user-select:none}
+#globe:active{cursor:grabbing}
+#globe .ocean{fill:var(--ocean)}#globe .grat{fill:none;stroke:var(--landline);stroke-width:.5;opacity:.6}
+#globe .land{stroke:var(--landline);stroke-width:.6}
+#globe .mk{stroke:var(--surface);stroke-width:1.5;cursor:pointer}
+#globe .ring{fill:none;stroke:var(--ink);stroke-width:1.5;pointer-events:none}
+#globe .sel{fill:none;stroke:var(--s1);stroke-width:2.5;pointer-events:none}
+.gctl{position:absolute;right:8px;bottom:8px;display:flex;flex-direction:column;gap:4px}
+.gctl button{width:34px;height:34px;border-radius:6px;border:1px solid var(--rule);background:var(--surface);color:var(--ink);font:500 18px/1 var(--sans);cursor:pointer}
+.gctl button.txt{font-size:12px;height:28px}
+.ghint{color:var(--muted);font-size:12px;margin:8px 0 0}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.seg button{font:500 13px var(--sans);color:var(--ink2);background:var(--surface);border:0;border-left:1px solid var(--rule);padding:6px 11px;cursor:pointer}
+.seg button:first-child{border-left:0}.seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
+.gside h3{margin:18px 0 8px}.gside h3:first-child{margin-top:0}
+.slegend{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2)}
+.slegend div{display:flex;flex-direction:column;align-items:center;gap:4px}
+.slegend svg{width:30px;height:30px}.glist svg{width:22px;height:22px}
+.gbox{position:relative}
+.glist{list-style:none;margin:0;padding:0}
+.glist li{border-bottom:1px solid var(--rule)}
+.glist button{all:unset;box-sizing:border-box;display:grid;grid-template-columns:22px 1fr;gap:8px;width:100%;padding:8px 0;cursor:pointer}
+.glist button:hover .t{text-decoration:underline}.glist button:focus-visible{outline:2px solid var(--s1)}
+.glist .t{font-size:14px;font-weight:500}.glist .d{font-size:12px;color:var(--muted)}
+.gdetail h4{font:600 20px/1.25 var(--serif);margin:8px 0 4px}
+.gdetail ul{margin:10px 0 0;padding-left:18px;font-size:13px}.gdetail li{margin:4px 0}
+.shleg{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;margin-top:8px}
+.shleg span{width:18px;height:10px;border-radius:2px;display:inline-block}
 footer{color:var(--muted);font-size:13px;padding:8px 0 40px;border-top:1px solid var(--rule)}
 footer p{margin:10px 0 0;max-width:80ch}
 @media (prefers-reduced-motion:no-preference){.panel{animation:show .18s ease-out}@keyframes show{from{opacity:.4}to{opacity:1}}}
@@ -195,6 +230,7 @@ footer p{margin:10px 0 0;max-width:80ch}
 <button class="tab" role="tab" data-tab="forecasts">Forecasts<span class="n" id="nFc"></span></button>
 <button class="tab" role="tab" data-tab="energy">Energy</button>
 <button class="tab" role="tab" data-tab="breakdown">Breakdown</button>
+<button class="tab" role="tab" data-tab="globe">Globe</button>
 </div></nav>
 <main class="wrap">
 <div id="banner"></div>
@@ -250,6 +286,23 @@ footer p{margin:10px 0 0;max-width:80ch}
 <div class="block" style="margin:0"><h2>Conflict events by risk type</h2><p class="note">GDELT, selected range.</p><div id="gcats"></div></div>
 </div>
 </section>
+
+<section class="panel" id="p-globe" role="tabpanel" hidden>
+<div class="block"><h2>Where the risks are</h2>
+<p class="note">Each marker is one distinct event, placed where it is happening. Size and colour show severity, not how often it was reported, so a single grave event stands out more than a minor story covered many times.</p>
+<div class="globe-wrap">
+<div class="globe-stage"><div class="gbox"><svg id="globe" role="img" aria-label="Interactive globe of geopolitical events, sized and coloured by severity"></svg>
+<div class="gctl"><button id="gIn" aria-label="Zoom in">+</button><button id="gOut" aria-label="Zoom out">−</button><button id="gReset" class="txt" aria-label="Reset view">Reset</button></div></div>
+<p class="ghint" id="ghint">Drag to rotate. Scroll or pinch to zoom. Select a marker for details.</p>
+<p class="note" id="gNote" style="margin:6px 0 0"></p></div>
+<div class="gside">
+<h3>Show</h3><div class="seg" id="gSev" role="group" aria-label="Minimum severity"><button data-v="1" aria-pressed="true">All</button><button data-v="3" aria-pressed="false">3+</button><button data-v="4" aria-pressed="false">4+</button><button data-v="5" aria-pressed="false">5 only</button></div>
+<h3>Severity</h3><div class="slegend" id="gLegend"></div>
+<h3>Shade countries by</h3><select id="gShade" aria-label="Shade countries by"><option value="sev">Highest severity</option><option value="count">Number of events</option><option value="">No shading</option></select><div class="shleg" id="gShLeg"></div>
+<div id="gSide" style="margin-top:20px"></div>
+</div></div>
+</div>
+</section>
 </main>
 <div class="wrap"><footer id="foot"></footer></div>
 <div class="tip" id="tip"></div>
@@ -292,6 +345,7 @@ function render(){
   lead(reg,geo); changing(reg); fcRender(); eventsRender(reg);
   energyRender(base,lens,Math.min(days,60));
   gdeltRender(days,reg);
+  if(G.ready)globeUpdate();
 }
 
 const ST={Escalating:['▲','up'],New:['●','new'],Steady:['–',''],Cooling:['▼',''],Quiet:['○','']};
@@ -486,13 +540,155 @@ function topList(geo){
     <td>${esc(r.country)}</td><td>${esc(D.labels[r.category])}</td></tr>`).join('')+'</table></div>':'<p class="note">None in this range.</p>';
 }
 
+// ---------------------------------------------------------------- globe
+const LIBS=['https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js','https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js'];
+const ATLAS='https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json';
+const ALIAS={'United States':'United States of America','USA':'United States of America','US':'United States of America','UK':'United Kingdom',
+  'DR Congo':'Dem. Rep. Congo','Democratic Republic of the Congo':'Dem. Rep. Congo','Republic of the Congo':'Congo','Bosnia and Herzegovina':'Bosnia and Herz.',
+  'Central African Republic':'Central African Rep.','South Sudan':'S. Sudan','North Macedonia':'Macedonia','Eswatini':'eSwatini','Dominican Republic':'Dominican Rep.',
+  'Czech Republic':'Czechia','Ivory Coast':"Côte d'Ivoire","Cote d'Ivoire":"Côte d'Ivoire",'Gaza':'Palestine','Gaza Strip':'Palestine','West Bank':'Palestine',
+  'Palestinian Territories':'Palestine','Equatorial Guinea':'Eq. Guinea','Western Sahara':'W. Sahara','Solomon Islands':'Solomon Is.','Türkiye':'Turkey'};
+const SMALL={'Singapore':[103.8,1.35],'Bahrain':[50.55,26.05],'Malta':[14.4,35.9],'Hong Kong':[114.2,22.3],'Maldives':[73.5,4.2],'Vatican City':[12.45,41.9],
+  'Monaco':[7.42,43.74],'Mauritius':[57.55,-20.3],'Barbados':[-59.55,13.15],'Andorra':[1.6,42.5],'Liechtenstein':[9.55,47.15],'Luxembourg':[6.13,49.8]};
+const SR=[0,3.5,5,7,9.5,12.5];                       // marker radius by severity
+const SHADE=[0,6,12,24,38,54];                       // % of severity colour mixed into a country's fill
+const G={ready:false,loading:false,minSev:1,shade:'sev',sel:null,rot:[-40,-25],k:1};
+const sevC=s=>`var(--sv${Math.max(1,Math.min(5,s||1))})`;
+
+function loadScript(u){return new Promise((ok,no)=>{const s=document.createElement('script');s.src=u;s.onload=ok;s.onerror=()=>no(new Error(u));document.head.appendChild(s)})}
+async function globeOpen(){
+  if(G.ready||G.loading)return; G.loading=true;
+  $('ghint').textContent='Loading the globe…';
+  try{for(const u of LIBS)await loadScript(u);
+    const world=await (await fetch(ATLAS)).json();
+    G.countries=topojson.feature(world,world.objects.countries).features.filter(f=>f.properties.name!=='Antarctica');
+    G.byName=new Map(G.countries.map(f=>[f.properties.name,f]));
+    G.centroid=new Map(G.countries.map(f=>[f.properties.name,d3.geoCentroid(f)]));
+    globeBuild(); G.ready=true; globeUpdate();
+    $('ghint').textContent='Drag to rotate. Scroll or pinch to zoom. Select a marker for details.';
+  }catch(e){$('ghint').textContent='The globe could not load. Check your connection and refresh the page.';G.loading=false}
+}
+const mapName=c=>ALIAS[c]||c;
+function eventPoint(e){
+  if(e.lat!=null&&e.lon!=null)return {pt:[e.lon,e.lat],exact:true};
+  const n=mapName(e.country);
+  if(G.centroid.has(n))return {pt:G.centroid.get(n),exact:false};
+  if(SMALL[e.country])return {pt:SMALL[e.country],exact:false};
+  return null;
+}
+function globeData(){
+  const days=+$('fRange').value, reg=$('fRegion').value, lens=$('fLens').value;
+  const cutoff=new Date(Date.now()-days*864e5).toISOString().slice(0,10);
+  let themes=null;
+  if(lens){themes=new Map();D.rows.forEach(r=>{if(r.event_id&&themesOf(r).length){const s=themes.get(r.event_id)||new Set();themesOf(r).forEach(t=>s.add(t));themes.set(r.event_id,s)}})}
+  const ev=(D.events||[]).filter(e=>e.last_seen>=cutoff&&(!reg||e.region===reg)&&(!themes||(themes.has(e.id)&&(lens==='*'||themes.get(e.id).has(lens)))));
+  const placed=[],unplaced=[];const seen=new Map();
+  ev.forEach(e=>{const p=eventPoint(e);if(!p){unplaced.push(e);return}
+    const key=p.pt.map(v=>Math.round(v*2)/2).join(','), k=seen.get(key)||0; seen.set(key,k+1);
+    const a=k*2.4, r=k?0.55*Math.sqrt(k):0;                     // spread markers that share a spot
+    placed.push({...e,pt:[p.pt[0]+r*Math.cos(a),p.pt[1]+r*Math.sin(a)],exact:p.exact})});
+  return {all:ev,placed,unplaced};
+}
+
+function globeBuild(){
+  const svg=d3.select('#globe');
+  G.svg=svg;G.proj=d3.geoOrthographic().clipAngle(90).precision(.3);G.path=d3.geoPath(G.proj);
+  svg.append('path').attr('class','ocean');
+  svg.append('path').attr('class','grat').datum(d3.geoGraticule10());
+  G.gLand=svg.append('g');G.gMk=svg.append('g');
+  G.gLand.selectAll('path').data(G.countries).join('path').attr('class','land')
+    .on('mousemove',(ev,f)=>{const c=G.byCountry&&G.byCountry.get(f.properties.name);
+      showTip(ev,`<b>${esc(f.properties.name)}</b><br>${c?`${plural(c.n,'event')}, highest severity ${c.max}`:'No events in this view'}`)})
+    .on('mouseleave',hideTip);
+  const sens=0.25;let last={x:0,y:0,k:1};
+  G.zoom=d3.zoom().scaleExtent([1,8]).on('zoom',ev=>{const t=ev.transform;
+    if(Math.abs(t.k-last.k)>1e-6)G.k=t.k;
+    else if(ev.sourceEvent){G.rot[0]+=(t.x-last.x)*sens/G.k;G.rot[1]=Math.max(-85,Math.min(85,G.rot[1]-(t.y-last.y)*sens/G.k))}
+    last={x:t.x,y:t.y,k:t.k};globeDraw()});
+  svg.call(G.zoom).on('dblclick.zoom',null);
+  $('gIn').onclick=()=>svg.transition().duration(250).call(G.zoom.scaleBy,1.6);
+  $('gOut').onclick=()=>svg.transition().duration(250).call(G.zoom.scaleBy,1/1.6);
+  $('gReset').onclick=()=>{G.sel=null;svg.call(G.zoom.transform,d3.zoomIdentity);last={x:0,y:0,k:1};G.k=1;flyTo(G.home);globeSide()};
+  document.querySelectorAll('#gSev button').forEach(b=>b.onclick=()=>{G.minSev=+b.dataset.v;document.querySelectorAll('#gSev button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));globeUpdate()});
+  $('gShade').onchange=()=>{G.shade=$('gShade').value;globeUpdate()};
+  $('gLegend').innerHTML=[1,2,3,4,5].map(s=>`<div><svg width="30" height="30" aria-hidden="true"><circle cx="15" cy="15" r="${SR[s]}" fill="${sevC(s)}" stroke="var(--surface)" stroke-width="1.5"/></svg>${s}</div>`).join('')
+    +`<div><svg width="30" height="30" aria-hidden="true"><circle cx="15" cy="15" r="7" fill="${sevC(3)}" stroke="var(--surface)" stroke-width="1.5"/><circle cx="15" cy="15" r="11" fill="none" stroke="var(--ink)" stroke-width="1.5"/></svg>Escalating</div>`;
+  window.addEventListener('resize',()=>{if(!$('p-globe').hidden)globeDraw()});
+}
+
+function globeUpdate(){
+  const {all,placed,unplaced}=globeData();
+  G.events=placed.filter(e=>e.max_severity>=G.minSev).sort((a,b)=>a.max_severity-b.max_severity);
+  G.byCountry=new Map();
+  placed.forEach(e=>{const n=mapName(e.country);if(!G.byName.has(n))return;const c=G.byCountry.get(n)||{n:0,max:0};c.n++;c.max=Math.max(c.max,e.max_severity);G.byCountry.set(n,c)});
+  const maxN=Math.max(1,...[...G.byCountry.values()].map(c=>c.n));
+  G.fill=f=>{const c=G.byCountry.get(f.properties.name);if(!c||!G.shade)return 'var(--land)';
+    return G.shade==='sev'?`color-mix(in srgb, ${sevC(c.max)} ${SHADE[c.max]}%, var(--land))`:`var(--q${Math.min(7,1+Math.floor(6*c.n/maxN))})`};
+  $('gShLeg').innerHTML=G.shade==='sev'?'Lower '+[1,2,3,4,5].map(s=>`<span style="background:color-mix(in srgb, ${sevC(s)} ${SHADE[s]}%, var(--land))"></span>`).join('')+' Higher'
+    :G.shade==='count'?'Fewer '+[1,2,3,4,5,6,7].map(i=>`<span style="background:var(--q${i})"></span>`).join('')+' More':'';
+  const approx=placed.filter(e=>!e.exact).length;
+  $('gNote').textContent=`${plural(all.length,'event')} in this view, ${G.events.length} shown at this severity.`+(approx?` ${approx} without a precise location are placed at the centre of their country.`:'')+(unplaced.length?` ${unplaced.length} global or multi-country ${unplaced.length==1?'event has':'events have'} no single location and ${unplaced.length==1?'is':'are'} not shown.`:'');
+  if(!G.home){ // start facing the most severe part of the world
+    const w=placed.filter(e=>e.max_severity>=4);const pts=(w.length?w:placed);
+    if(pts.length){let x=0,y=0,z=0;pts.forEach(e=>{const l=e.pt[0]*Math.PI/180,p=e.pt[1]*Math.PI/180;x+=Math.cos(p)*Math.cos(l);y+=Math.cos(p)*Math.sin(l);z+=Math.sin(p)});
+      G.home=[-Math.atan2(y,x)*180/Math.PI,-Math.max(-60,Math.min(60,Math.atan2(z,Math.hypot(x,y))*180/Math.PI))];}
+    else G.home=[-20,-20];
+    G.rot=[...G.home];
+  }
+  if(G.sel&&!G.events.find(e=>e.id===G.sel))G.sel=null;
+  globeDraw();globeSide();
+}
+
+function globeDraw(){
+  const box=$('globe').parentNode.getBoundingClientRect(),w=Math.max(280,box.width),h=Math.min(w,640);
+  G.svg.attr('viewBox',`0 0 ${w} ${h}`);
+  G.proj.translate([w/2,h/2]).scale((Math.min(w,h)/2-6)*G.k).rotate(G.rot);
+  G.svg.select('.ocean').datum({type:'Sphere'}).attr('d',G.path);G.svg.select('.grat').attr('d',G.path);
+  G.gLand.selectAll('path').attr('d',G.path).attr('fill',G.fill);
+  const c=[-G.rot[0],-G.rot[1]];
+  const vis=G.events.filter(e=>d3.geoDistance(e.pt,c)<Math.PI/2-0.02);
+  const r=e=>SR[e.max_severity||1]*Math.min(1.6,Math.sqrt(G.k));
+  G.gMk.selectAll('g.m').data(vis,e=>e.id).join(en=>{const g=en.append('g').attr('class','m');
+      g.append('circle').attr('class','mk');g.append('circle').attr('class','ring');g.append('circle').attr('class','sel');
+      g.on('mousemove',(ev,e)=>showTip(ev,`<b>${esc(e.name)}</b><br>${esc(e.place||e.country)}<br>Severity ${e.max_severity}, ${e.status.toLowerCase()}, ${plural(e.reports,'report')}`))
+       .on('mouseleave',hideTip).on('click',(ev,e)=>{ev.stopPropagation();G.sel=e.id;globeDraw();globeSide()});return g})
+    .each(function(e){const [x,y]=G.proj(e.pt),g=d3.select(this);
+      g.select('.mk').attr('cx',x).attr('cy',y).attr('r',r(e)).attr('fill',sevC(e.max_severity));
+      g.select('.ring').attr('cx',x).attr('cy',y).attr('r',r(e)+3).style('display',e.status==='Escalating'?null:'none');
+      g.select('.sel').attr('cx',x).attr('cy',y).attr('r',r(e)+6).style('display',e.id===G.sel?null:'none')})
+    .order();
+}
+
+function flyTo(pt){
+  const from=[...G.rot],to=pt.length===2&&typeof pt[0]==='number'&&pt!==G.home?[-pt[0],-pt[1]]:pt;
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){G.rot=to;globeDraw();return}
+  const i=d3.interpolate(from,to);
+  d3.transition().duration(700).tween('rotate',()=>t=>{G.rot=i(t);globeDraw()});
+}
+
+function globeSide(){
+  const e=G.sel&&G.events.find(x=>x.id===G.sel);
+  if(e){
+    $('gSide').innerHTML=`<div class="gdetail"><div class="lead-meta">${stPill(e.status)}<span>Severity ${e.max_severity} of 5</span></div><h4>${esc(e.name)}</h4>
+      <div class="sub">${esc(e.place||e.country)}. ${plural(e.reports,'report')} from ${plural(e.sources,'outlet')} since ${fmtDay(e.first_seen)}.</div>
+      <ul>${e.headlines.slice(0,4).map(h=>`<li>${h.link?`<a href="${esc(h.link)}" target="_blank" rel="noopener">${esc(h.title)}</a>`:esc(h.title)} <span class="sub" style="display:inline">${esc(h.source)}, ${fmtDay(h.day)}</span></li>`).join('')}</ul>
+      <button class="more" id="gBack">Back to the most severe events</button></div>`;
+    $('gBack').onclick=()=>{G.sel=null;globeDraw();globeSide()};return;
+  }
+  const top=[...G.events].sort((a,b)=>b.max_severity-a.max_severity||(b.last_seen>a.last_seen?1:-1)||b.reports-a.reports).slice(0,8);
+  $('gSide').innerHTML=`<h3>Most severe in this view</h3>`+(top.length?`<ul class="glist">${top.map(e=>`<li><button data-id="${esc(e.id)}"><svg width="22" height="22" aria-hidden="true"><circle cx="11" cy="11" r="${Math.min(10,SR[e.max_severity])}" fill="${sevC(e.max_severity)}"/></svg><span><span class="t">${esc(e.name)}</span><br><span class="d">${esc(e.place||e.country)}, severity ${e.max_severity}</span></span></button></li>`).join('')}</ul>`
+    :'<p class="note">No events match these filters.</p>');
+  $('gSide').querySelectorAll('button[data-id]').forEach(b=>b.onclick=()=>{const ev=G.events.find(x=>x.id===b.dataset.id);G.sel=ev.id;flyTo(ev.pt);globeSide()});
+}
+
 // tabs: remember the open tab in the address (#forecasts etc.)
-const TABS=['overview','events','forecasts','energy','breakdown'];
+const TABS=['overview','events','forecasts','energy','breakdown','globe'];
 function openTab(name,push){
   if(!TABS.includes(name))name='overview';
   document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===name)));
   TABS.forEach(t=>$('p-'+t).hidden=t!==name);
   if(push)history.replaceState(null,'','#'+name);
+  if(name==='globe')globeOpen();
 }
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{openTab(b.dataset.tab,true);window.scrollTo({top:0})});
 document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{openTab(b.dataset.go,true);window.scrollTo({top:0})});

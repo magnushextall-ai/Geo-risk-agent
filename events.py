@@ -55,6 +55,10 @@ def ensure_schema(db):
     cols = {r[1] for r in db.execute("PRAGMA table_info(articles)")}
     if "event_id" not in cols:
         db.execute("ALTER TABLE articles ADD COLUMN event_id TEXT")
+    ecols = {r[1] for r in db.execute("PRAGMA table_info(events)")}
+    for col, kind in (("place", "TEXT"), ("lat", "REAL"), ("lon", "REAL")):
+        if col not in ecols:  # where the event is happening, added by geocode()
+            db.execute(f"ALTER TABLE events ADD COLUMN {col} {kind}")
 
 
 def _next_id(db):
@@ -112,13 +116,14 @@ def update(db, client, log=print):
                     key = name.lower()
                     if key not in new_ids:
                         new_ids[key] = (f"E{_next_id(db)}", name, a.get("country") or batch[i][2], batch[i][3])
-                        db.execute("INSERT INTO events VALUES (?,?,?,?,?,?)", (*new_ids[key], day, day))
+                        db.execute("INSERT INTO events (id, name, country, region, first_seen, last_seen) VALUES (?,?,?,?,?,?)",
+                                   (*new_ids[key], day, day))
                     choice[i] = new_ids[key][0]
             for i, row in enumerate(batch):
                 if i not in choice:  # the model skipped it: give it an event of its own
                     eid = f"E{_next_id(db)}"
-                    db.execute("INSERT INTO events VALUES (?,?,?,?,?,?)",
-                               (eid, row[4][:120], row[2], row[3], day, day))
+                    db.execute("INSERT INTO events (id, name, country, region, first_seen, last_seen) "
+                               "VALUES (?,?,?,?,?,?)", (eid, row[4][:120], row[2], row[3], day, day))
                     choice[i] = eid
                 db.execute("UPDATE articles SET event_id = ? WHERE id = ?", (choice[i], row[0]))
                 assigned += 1
@@ -126,6 +131,53 @@ def update(db, client, log=print):
     _refresh_dates(db)
     n_events = db.execute("SELECT COUNT(DISTINCT event_id) FROM articles WHERE event_id IS NOT NULL").fetchone()[0]
     log(f"  grouped {assigned} headlines ({calls} calls); {n_events} events in total")
+
+
+GEO_PROMPT = """For each news event below, give the single most specific place where it is happening
+(a city, region, sea area or chokepoint where possible, otherwise the country) and its latitude and
+longitude in decimal degrees. For an event spread across several countries, pick the location most
+central to the story (for example a summit's host city or the main front line). If an event has no
+meaningful location at all, use null for lat and lon.
+
+Events (id | name | country):
+{events}
+
+Return ONLY a JSON object, no other text:
+{{"locations": [{{"id": "<event id>", "place": "<place, country>", "lat": <number or null>, "lon": <number or null>}}]}}"""
+
+
+def geocode(db, client, log=print):
+    """Give events without a location a place name and coordinates."""
+    ensure_schema(db)
+    todo = db.execute("SELECT id, name, country FROM events WHERE place IS NULL "
+                      "ORDER BY last_seen DESC LIMIT ?", (config.GEOCODE_MAX,)).fetchall()
+    if not todo:
+        return
+    log(f"Locating {len(todo)} events...")
+    done = 0
+    for start in range(0, len(todo), config.GEOCODE_BATCH):
+        batch = todo[start : start + config.GEOCODE_BATCH]
+        ids = {b[0] for b in batch}
+        try:
+            reply = ask_json(client, GEO_PROMPT.format(
+                events="\n".join(f"{i} | {n} | {c}" for i, n, c in batch)), max_tokens=8000)
+        except Exception as e:
+            log(f"  ! locating stopped (will retry next run): {e}")
+            break
+        for loc in reply.get("locations", []):
+            if loc.get("id") not in ids:
+                continue
+            try:
+                lat, lon = float(loc["lat"]), float(loc["lon"])
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    raise ValueError
+            except (TypeError, ValueError, KeyError):
+                lat = lon = None  # no meaningful location: the dashboard falls back to the country
+            db.execute("UPDATE events SET place = ?, lat = ?, lon = ? WHERE id = ?",
+                       (str(loc.get("place") or "")[:120], lat, lon, loc["id"]))
+            done += 1
+        db.commit()
+    log(f"  located {done} events")
 
 
 def _refresh_dates(db):
@@ -146,13 +198,13 @@ def summarise(db, today=None, days=config.EVENT_TRACK_DAYS):
     since = (today - timedelta(days=days - 1)).isoformat()
     rows = db.execute(
         "SELECT a.event_id, SUBSTR(a.fetched_at, 1, 10), a.severity, a.source, a.title, a.link, "
-        "e.name, e.country, e.region, e.first_seen "
+        "e.name, e.country, e.region, e.first_seen, e.place, e.lat, e.lon "
         "FROM articles a JOIN events e ON e.id = a.event_id "
         "WHERE SUBSTR(a.fetched_at, 1, 10) >= ? ORDER BY a.fetched_at DESC", (since,)).fetchall()
     ev = {}
-    for eid, d, sev, src, title, link, name, country, region, first in rows:
+    for eid, d, sev, src, title, link, name, country, region, first, place, lat, lon in rows:
         e = ev.setdefault(eid, {"id": eid, "name": name, "country": country, "region": region,
-                                "first_seen": first, "daily": defaultdict(int), "sev": defaultdict(int),
+                                "first_seen": first, "place": place, "lat": lat, "lon": lon, "daily": defaultdict(int), "sev": defaultdict(int),
                                 "sources": set(), "headlines": []})
         e["daily"][d] += 1
         e["sev"][d] = max(e["sev"][d], sev or 0)
@@ -187,6 +239,7 @@ def summarise(db, today=None, days=config.EVENT_TRACK_DAYS):
             "max_severity": max(e["sev"].values()), "recent_severity": r_s,
             "sources": len(e["sources"]), "daily": [e["daily"].get(d, 0) for d in dates],
             "headlines": e["headlines"],
+            "place": e["place"], "lat": e["lat"], "lon": e["lon"],
         })
     order = {"Escalating": 0, "New": 1, "Steady": 2, "Cooling": 3, "Quiet": 4}
     out.sort(key=lambda e: (order[e["status"]], -e["recent_severity"], -e["max_severity"], -e["reports"]))
